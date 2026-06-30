@@ -2,7 +2,14 @@ import base64
 
 import pytest
 
-from cellar.irc import IRCClient, parse_privmsg, sasl_plain_chunks
+from cellar.irc import (
+    IRCClient,
+    irc_casefold,
+    mentions_nick,
+    parse_privmsg,
+    sasl_plain_chunks,
+    truncate_utf8,
+)
 from cellar.models import IRCProfile
 
 
@@ -30,6 +37,17 @@ def test_ignore_other_commands() -> None:
 def test_sasl_plain_payload() -> None:
     expected = base64.b64encode(b"ghost\0ghost\0secret").decode()
     assert sasl_plain_chunks("ghost", "secret") == [expected]
+
+
+def test_rfc1459_nickname_matching_requires_boundaries() -> None:
+    assert irc_casefold("[Ghost]\\^") == "{ghost}|~"
+    assert mentions_nick("ghost: are you there?", "Ghost")
+    assert mentions_nick("hello {ghost}", "[Ghost]")
+    assert not mentions_nick("ghostwriter", "ghost")
+
+
+def test_utf8_truncation_preserves_complete_characters() -> None:
+    assert truncate_utf8("ééé", 5) == "éé"
 
 
 @pytest.mark.asyncio
@@ -89,3 +107,33 @@ async def test_capabilities_are_requested_separately(monkeypatch) -> None:
     assert "CAP REQ :account-tag" in writer.lines
     assert "CAP REQ :sasl account-tag" not in writer.lines
     assert writer.lines.count("CAP END") == 1
+
+
+@pytest.mark.asyncio
+async def test_send_message_enforces_irc_byte_limit() -> None:
+    class Writer:
+        def __init__(self) -> None:
+            self.data = b""
+
+        def write(self, data: bytes) -> None:
+            self.data = data
+
+        async def drain(self) -> None:
+            return None
+
+    async def handler(_message) -> None:
+        return None
+
+    client = IRCClient(
+        IRCProfile(network="test", host="localhost", tls=False, nick="ghost",
+                   username="ghost", realname="Ghost", channels=["#test"]),
+        handler,
+    )
+    writer = Writer()
+    client.writer = writer  # type: ignore[assignment]
+    await client.send_message("#test", "é" * 400)
+
+    assert len(writer.data) <= 512
+    assert len(writer.data[:-2]) <= 510
+    assert writer.data.endswith(b"\r\n")
+    writer.data[:-2].decode("utf-8")

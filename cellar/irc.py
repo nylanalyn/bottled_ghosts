@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+import re
 import ssl
 from collections.abc import Awaitable, Callable
 
@@ -8,6 +9,30 @@ from cellar.models import IRCProfile, IncomingIRCMessage
 
 MessageHandler = Callable[[IncomingIRCMessage], Awaitable[None]]
 logger = logging.getLogger(__name__)
+IRC_PAYLOAD_BYTES = 510
+IRC_NICK_CHARACTERS = r"A-Za-z0-9\-\[\]\\`_^{|}~"
+
+
+def irc_casefold(value: str) -> str:
+    return value.lower().translate(str.maketrans("[]\\^", "{}|~"))
+
+
+def mentions_nick(text: str, nick: str) -> bool:
+    folded_text = irc_casefold(text)
+    folded_nick = re.escape(irc_casefold(nick))
+    return re.search(
+        rf"(?<![{IRC_NICK_CHARACTERS}]){folded_nick}(?![{IRC_NICK_CHARACTERS}])",
+        folded_text,
+    ) is not None
+
+
+def truncate_utf8(text: str, max_bytes: int) -> str:
+    if max_bytes < 0:
+        raise ValueError("UTF-8 byte limit cannot be negative")
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
 def parse_privmsg(line: str) -> IncomingIRCMessage | None:
@@ -53,11 +78,18 @@ class IRCClient:
     async def send_raw(self, line: str) -> None:
         if self.writer is None:
             raise RuntimeError("IRC client is not connected")
-        self.writer.write(f"{line}\r\n".encode())
+        encoded = line.encode("utf-8")
+        if len(encoded) > IRC_PAYLOAD_BYTES:
+            raise ValueError("IRC protocol line exceeds 510 bytes")
+        self.writer.write(encoded + b"\r\n")
         await self.writer.drain()
 
     async def send_message(self, target: str, body: str) -> None:
-        await self.send_raw(f"PRIVMSG {target} :{body}")
+        prefix = f"PRIVMSG {target} :"
+        available = IRC_PAYLOAD_BYTES - len(prefix.encode("utf-8"))
+        if available < 1:
+            raise ValueError("IRC message target leaves no room for a body")
+        await self.send_raw(f"{prefix}{truncate_utf8(body, available)}")
 
     async def authenticate_sasl_plain(self) -> None:
         username = self.profile.sasl_username

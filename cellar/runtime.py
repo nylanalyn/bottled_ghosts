@@ -6,7 +6,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from cellar.irc import IRCClient
+from cellar.irc import IRCClient, irc_casefold, mentions_nick
 from cellar.identity import resolve_user
 from cellar.listening import ListeningWindowManager
 from cellar.llm import complete
@@ -28,6 +28,7 @@ class WindowMessage:
     message: IncomingIRCMessage
     user_id: str
     message_id: int
+    conversation: str
 
 
 async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
@@ -43,9 +44,9 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
         user_id = latest.user_id
         message_ids = [item.message_id for item in items]
         body = "\n".join(item.message.body for item in items)
-        speaker, channel = message.nick, message.target
-        direct_message = channel.casefold() == bottle.irc.nick.casefold()
-        reply_target = speaker if direct_message else channel
+        speaker, channel = message.nick, latest.conversation
+        direct_message = irc_casefold(message.target) == irc_casefold(bottle.irc.nick)
+        reply_target = speaker if direct_message else message.target
         module_context = ModuleContext(
             db=db, bottle=bottle, message=message, user_id=user_id,
             source_message_id=latest.message_id,
@@ -79,7 +80,7 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
             await client.send_message(reply_target, line)
             async with database_lock:
                 await log_message(
-                    db, IRCMessage(network=bottle.irc.network, channel=reply_target,
+                    db, IRCMessage(network=bottle.irc.network, channel=channel,
                                    speaker=bottle.irc.nick, body=line, bot_id=bottle.id),
                 )
         logger.info("sent %d reply line(s) to %s", len(lines), reply_target)
@@ -114,8 +115,10 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
     async def on_message(message: IncomingIRCMessage) -> None:
         async with database_lock:
             user_id = await resolve_user(db, network=bottle.irc.network, identity=message)
+            direct_message = irc_casefold(message.target) == irc_casefold(bottle.irc.nick)
+            conversation = f"@{user_id}" if direct_message else message.target
             incoming = IRCMessage(
-                network=bottle.irc.network, channel=message.target, speaker=message.nick,
+                network=bottle.irc.network, channel=conversation, speaker=message.nick,
                 body=message.body, bot_id=bottle.id, user_id=user_id,
             )
             message_id = await log_message(db, incoming)
@@ -124,12 +127,14 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
                 source_message_id=message_id,
             )
             await modules.on_message(module_context)
-        key = (message.target.casefold(), user_id)
-        direct_message = message.target.casefold() == bottle.irc.nick.casefold()
-        addressed = direct_message or bottle.irc.nick.casefold() in message.body.casefold()
+        key = (irc_casefold(conversation), user_id)
+        addressed = direct_message or mentions_nick(message.body, bottle.irc.nick)
         if windows.contains(key) or addressed:
             windows.add(
-                key, WindowMessage(message=message, user_id=user_id, message_id=message_id)
+                key, WindowMessage(
+                    message=message, user_id=user_id, message_id=message_id,
+                    conversation=conversation,
+                )
             )
 
     client = IRCClient(bottle.irc, on_message)

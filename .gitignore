@@ -31,6 +31,7 @@ tmp/
 # Python environments and bytecode
 .venv/
 .uv/
+.serena/
 venv/
 env/
 __pycache__/

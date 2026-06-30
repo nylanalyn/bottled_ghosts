@@ -209,3 +209,73 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
         assert source is not None and source[0] == "second line"
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_messages_share_stable_incoming_and_outgoing_history(
+    monkeypatch, tmp_path,
+) -> None:
+    database = tmp_path / "direct-message.db"
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(database)
+    bottle_id = await create_bottle(
+        db, name="test", soul_prompt_path=soul,
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost", channels=["#test"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+        cooldown_seconds=0, listen_window_seconds=0.01,
+    )
+    bottle = await load_bottle(db, bottle_id)
+    sent: list[tuple[str, str]] = []
+
+    class FakeModules:
+        async def on_message(self, _context) -> None:
+            return None
+
+        async def before_prompt(self, _context) -> None:
+            return None
+
+        async def after_response(self, _context) -> None:
+            return None
+
+    class FakeIRCClient:
+        def __init__(self, _profile, handler) -> None:
+            self.handler = handler
+
+        async def run(self) -> None:
+            await self.handler(IncomingIRCMessage(
+                nick="Alice", hostmask="u@host", account="alice",
+                target="GHOST", body="hello privately",
+            ))
+            await asyncio.sleep(0.03)
+
+        async def send_message(self, target: str, body: str) -> None:
+            sent.append((target, body))
+
+    async def fake_load_modules(_db, *, bottle_id: int):
+        assert bottle_id == bottle.id
+        return FakeModules()
+
+    async def fake_complete(_profile, _prompt) -> str:
+        return "private reply"
+
+    monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+    monkeypatch.setattr("cellar.runtime.load_modules", fake_load_modules)
+    monkeypatch.setattr("cellar.runtime.complete", fake_complete)
+
+    try:
+        await run_bottle_once(db, bottle)
+        rows = list(await (await db.execute(
+            "SELECT channel, speaker, body FROM messages ORDER BY id"
+        )).fetchall())
+        assert len(rows) == 2
+        assert rows[0]["channel"].startswith("@")
+        assert rows[1]["channel"] == rows[0]["channel"]
+        assert [(row["speaker"], row["body"]) for row in rows] == [
+            ("Alice", "hello privately"),
+            ("ghost", "private reply"),
+        ]
+        assert sent == [("Alice", "private reply")]
+    finally:
+        await db.close()

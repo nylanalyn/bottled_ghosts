@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import logging
 from getpass import getpass
 from pathlib import Path
@@ -16,7 +17,12 @@ from cellar.memory_store import (
     reject_memory_candidate,
 )
 from cellar.module_loader import available_modules
-from cellar.module_store import module_states, set_module_enabled
+from cellar.module_store import (
+    module_settings,
+    module_states,
+    set_module_enabled,
+    set_module_settings,
+)
 from cellar.storage import (
     create_bottle,
     list_bottles,
@@ -131,8 +137,11 @@ async def async_main(args: argparse.Namespace) -> None:
                       f"<{result.speaker}> {result.body}")
         elif args.command == "modules":
             states = await module_states(db, bottle_id=args.bottle_id)
+            settings = await module_settings(db, bottle_id=args.bottle_id)
             for name in available_modules():
-                print(f"{name}\t{'enabled' if states.get(name, False) else 'disabled'}")
+                encoded = json.dumps(settings.get(name, {}), sort_keys=True)
+                print(f"{name}\t{'enabled' if states.get(name, False) else 'disabled'}"
+                      f"\t{encoded}")
         elif args.command == "module-toggle":
             if args.module_name not in available_modules():
                 raise ValueError(f"unknown module: {args.module_name}")
@@ -142,6 +151,18 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"{args.module_name} {'enabled' if enabled else 'disabled'} "
                   f"for Bottle {args.bottle_id}; reconnect to apply")
+        elif args.command == "module-settings":
+            if args.module_name not in available_modules():
+                raise ValueError(f"unknown module: {args.module_name}")
+            parsed = json.loads(args.settings_json)
+            if not isinstance(parsed, dict):
+                raise ValueError("module settings must be a JSON object")
+            await set_module_settings(
+                db, bottle_id=args.bottle_id, module_name=args.module_name,
+                settings=parsed, actor=args.actor,
+            )
+            print(f"Updated {args.module_name} settings for Bottle {args.bottle_id}; "
+                  "reconnect to apply")
         elif args.command == "dream":
             summary = await run_dream(
                 db, bottle=await load_bottle(db, args.bottle_id), hours=args.hours,
@@ -232,6 +253,13 @@ def main() -> None:
     module_toggle.add_argument("bottle_id", type=int)
     module_toggle.add_argument("module_name")
     module_toggle.add_argument("state", choices=("on", "off"))
+    module_settings_parser = commands.add_parser(
+        "module-settings", help="replace a module's JSON settings"
+    )
+    module_settings_parser.add_argument("bottle_id", type=int)
+    module_settings_parser.add_argument("module_name")
+    module_settings_parser.add_argument("settings_json")
+    module_settings_parser.add_argument("--actor", default="operator")
     dream_parser = commands.add_parser("dream", help="summarize one Bottle's recent activity")
     dream_parser.add_argument("bottle_id", type=int)
     dream_parser.add_argument("--hours", type=int, default=24)

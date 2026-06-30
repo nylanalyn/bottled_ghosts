@@ -1,3 +1,5 @@
+import json
+
 import aiosqlite
 
 
@@ -22,3 +24,52 @@ async def module_states(db: aiosqlite.Connection, *, bottle_id: int) -> dict[str
         (bottle_id,),
     )
     return {str(row["module_name"]): bool(row["enabled"]) for row in await cursor.fetchall()}
+
+
+async def module_settings(
+    db: aiosqlite.Connection, *, bottle_id: int
+) -> dict[str, dict[str, object]]:
+    cursor = await db.execute(
+        "SELECT module_name, settings_json FROM bot_modules WHERE bot_id = ? ORDER BY module_name",
+        (bottle_id,),
+    )
+    settings: dict[str, dict[str, object]] = {}
+    for row in await cursor.fetchall():
+        value = json.loads(row["settings_json"])
+        if not isinstance(value, dict):
+            raise ValueError(f"settings for module {row['module_name']} are not a JSON object")
+        settings[str(row["module_name"])] = value
+    return settings
+
+
+async def set_module_settings(
+    db: aiosqlite.Connection, *, bottle_id: int, module_name: str,
+    settings: dict[str, object], actor: str,
+) -> None:
+    actor = actor.strip()
+    if not actor:
+        raise ValueError("configuration actor cannot be empty")
+    encoded = json.dumps(settings, sort_keys=True, separators=(",", ":"))
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        bottle = await (await db.execute(
+            "SELECT 1 FROM bots WHERE id = ?", (bottle_id,)
+        )).fetchone()
+        if bottle is None:
+            raise LookupError(f"Bottle {bottle_id} does not exist")
+        await db.execute(
+            """INSERT INTO bot_modules(bot_id, module_name, enabled, settings_json)
+               VALUES (?, ?, 0, ?)
+               ON CONFLICT(bot_id, module_name)
+               DO UPDATE SET settings_json = excluded.settings_json""",
+            (bottle_id, module_name, encoded),
+        )
+        await db.execute(
+            """INSERT INTO configuration_events(bot_id, actor, changed_fields)
+               VALUES (?, ?, ?)""",
+            (bottle_id, actor, f"module:{module_name}:settings"),
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise

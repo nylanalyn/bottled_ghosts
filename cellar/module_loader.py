@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import Callable
 
@@ -24,10 +25,11 @@ def module_factory(name: str) -> ModuleFactory | None:
 
 async def load_modules(db: aiosqlite.Connection, *, bottle_id: int) -> ModuleRunner:
     cursor = await db.execute(
-        """SELECT module_name FROM bot_modules
+        """SELECT module_name, settings_json FROM bot_modules
            WHERE bot_id = ? AND enabled = 1 ORDER BY module_name""", (bottle_id,),
     )
     loaded: list[ModuleContract] = []
+    settings: dict[str, dict[str, object]] = {}
     for row in await cursor.fetchall():
         name = str(row["module_name"])
         factory = module_factory(name)
@@ -35,7 +37,15 @@ async def load_modules(db: aiosqlite.Connection, *, bottle_id: int) -> ModuleRun
             logger.error("Bottle %d enables unknown module %s; skipping", bottle_id, name)
             continue
         try:
+            parsed = json.loads(row["settings_json"])
+            if not isinstance(parsed, dict):
+                raise ValueError("settings_json must contain a JSON object")
+            settings[name] = parsed
+        except (json.JSONDecodeError, ValueError):
+            logger.exception("invalid settings for module %s on Bottle %d", name, bottle_id)
+            settings[name] = {}
+        try:
             loaded.append(factory())
         except Exception:
             logger.exception("failed to initialize module %s for Bottle %d", name, bottle_id)
-    return ModuleRunner(loaded)
+    return ModuleRunner(loaded, settings)

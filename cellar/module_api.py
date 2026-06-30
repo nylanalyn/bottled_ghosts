@@ -16,6 +16,7 @@ class ModuleContext:
     message: IncomingIRCMessage
     user_id: str
     source_message_id: int
+    module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
     prompt_sections: list[str] = field(default_factory=list)
     response: str | None = None
 
@@ -27,6 +28,7 @@ class NightlyContext:
     period_start: str
     period_end: str
     summary: str
+    module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 class ModuleContract(Protocol):
@@ -37,8 +39,12 @@ class ModuleContract(Protocol):
 
 
 class ModuleRunner:
-    def __init__(self, modules: list[ModuleContract]) -> None:
+    def __init__(
+        self, modules: list[ModuleContract],
+        settings: dict[str, dict[str, object]] | None = None,
+    ) -> None:
         self.modules = modules
+        self.settings = settings or {}
 
     async def on_message(self, ctx: ModuleContext) -> None:
         await self._run("on_message", ctx)
@@ -53,6 +59,7 @@ class ModuleRunner:
         await self._run("nightly", ctx)
 
     async def _run(self, hook: str, ctx: ModuleContext | NightlyContext) -> None:
+        ctx.module_settings = self.settings
         for module in self.modules:
             try:
                 callback = getattr(module, hook)

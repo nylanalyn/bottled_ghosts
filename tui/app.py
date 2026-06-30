@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Literal, cast
 
@@ -32,7 +33,12 @@ from cellar.memory_store import (
 )
 from cellar.config_store import BottleSettings, load_bottle_settings, save_bottle_settings
 from cellar.module_loader import available_modules
-from cellar.module_store import module_states, set_module_enabled
+from cellar.module_store import (
+    module_settings,
+    module_states,
+    set_module_enabled,
+    set_module_settings,
+)
 from cellar.models import LogSearchResult
 from cellar.models import IRCProfile, LLMProfile
 from cellar.storage import (
@@ -61,6 +67,8 @@ class BottledGhostsApp(App[None]):
     #save-memory { margin: 1; width: 20; }
     #module-title { height: 2; padding: 0 1; background: $panel; }
     #module-list { height: 1fr; border: solid $accent; }
+    #module-settings { margin: 1; }
+    #save-module-settings { margin: 0 1 1 1; width: 24; }
     #log-search-query { margin: 1; }
     #log-search-scope { margin: 0 2; }
     #run-log-search { margin: 1; width: 18; }
@@ -127,6 +135,9 @@ class BottledGhostsApp(App[None]):
             with TabPane("Modules", id="modules-tab"):
                 yield Static("Select a Bottle on the Bottles tab.", id="module-title")
                 yield DataTable(id="module-list")
+                yield Input(placeholder='Module settings JSON object, e.g. {"key":"value"}',
+                            id="module-settings")
+                yield Button("Save audited settings", id="save-module-settings")
             with TabPane("Log Search", id="log-search-tab"):
                 yield Input(placeholder="FTS search query", id="log-search-query")
                 yield Checkbox("Scope to selected Bottle", value=True, id="log-search-scope")
@@ -258,6 +269,7 @@ class BottledGhostsApp(App[None]):
             await self.show_memory(row_id)
         elif event.data_table.id == "module-list":
             self.selected_module_name = str(event.row_key.value)
+            await self.show_module_settings()
         elif event.data_table.id == "log-results":
             self.show_log_result(int(str(event.row_key.value)))
         elif event.data_table.id == "audit-list":
@@ -379,6 +391,8 @@ class BottledGhostsApp(App[None]):
             await self.action_save_configuration()
         elif event.button.id == "new-configuration":
             self.action_new_configuration()
+        elif event.button.id == "save-module-settings":
+            await self.action_save_module_settings()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "log-search-query":
@@ -412,9 +426,14 @@ class BottledGhostsApp(App[None]):
             self.selected_module_name = None
             return
         states = await module_states(self.db, bottle_id=self.selected_bottle_id)
+        settings = await module_settings(self.db, bottle_id=self.selected_bottle_id)
         for name in available_modules():
             table.add_row(name, "enabled" if states.get(name, False) else "disabled", key=name)
         self.selected_module_name = available_modules()[0] if available_modules() else None
+        if self.selected_module_name is not None:
+            self.query_one("#module-settings", Input).value = json.dumps(
+                settings.get(self.selected_module_name, {}), sort_keys=True,
+            )
         self.query_one("#module-title", Static).update(
             f"Bottle {self.selected_bottle_id} configuration — F2 Bottle, "
             "F3 extraction, F4 selected module"
@@ -461,6 +480,33 @@ class BottledGhostsApp(App[None]):
                     "reconnect to apply")
         await self.refresh_modules()
         await self.refresh_dashboard()
+
+    async def show_module_settings(self) -> None:
+        if self.db is None or self.selected_bottle_id is None or self.selected_module_name is None:
+            return
+        settings = await module_settings(self.db, bottle_id=self.selected_bottle_id)
+        self.query_one("#module-settings", Input).value = json.dumps(
+            settings.get(self.selected_module_name, {}), sort_keys=True,
+        )
+
+    async def action_save_module_settings(self) -> None:
+        if self.db is None or self.selected_bottle_id is None or self.selected_module_name is None:
+            self.notify("No module selected", severity="warning")
+            return
+        try:
+            value = json.loads(self.query_one("#module-settings", Input).value)
+            if not isinstance(value, dict):
+                raise ValueError("module settings must be a JSON object")
+            await set_module_settings(
+                self.db, bottle_id=self.selected_bottle_id,
+                module_name=self.selected_module_name, settings=value, actor=self.actor,
+            )
+        except (json.JSONDecodeError, ValueError) as error:
+            self.notify(str(error), severity="error")
+            return
+        self.notify(f"Updated {self.selected_module_name} settings; reconnect to apply")
+        await self.refresh_modules()
+        await self.refresh_audit()
 
     def action_focus_log_search(self) -> None:
         self.query_one("#log-search-query", Input).focus()

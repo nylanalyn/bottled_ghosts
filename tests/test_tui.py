@@ -4,7 +4,7 @@ from textual.widgets import Checkbox, DataTable, Input, Select
 
 from cellar.identity import resolve_user
 from cellar.memory_store import list_memory_candidates, store_memory_candidates
-from cellar.module_store import module_states
+from cellar.module_store import module_settings, module_states
 from cellar.models import (
     ExtractedMemory,
     IRCMessage,
@@ -79,6 +79,8 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         app.selected_module_name = "channel_context"
         await app.action_toggle_extraction()
         await app.action_toggle_module()
+        app.query_one("#module-settings", Input).value = '{"label":"quiet room"}'
+        await app.action_save_module_settings()
         await app.action_toggle_bottle()
         await pilot.pause()
         app.query_one("#log-search-query", Input).value = "tea"
@@ -109,7 +111,7 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         await app.action_save_configuration()
         await pilot.pause()
         assert app.query_one("#bottles", DataTable).row_count == 2
-        assert app.query_one("#audit-list", DataTable).row_count == 4
+        assert app.query_one("#audit-list", DataTable).row_count == 5
 
     db = await open_database(database)
     try:
@@ -147,11 +149,15 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         assert tuple(bottle_state) == (0, 1, "mossy")
         assert tuple(model) == ("new-model",)
         assert [tuple(row) for row in configuration_events] == [
+            ("tui-test", "module:channel_context:settings"),
             ("tui-test", "model,name"),
             ("tui-test", "created"),
         ]
         assert bottle_count[0] == 2
         assert await module_states(db, bottle_id=bottle_id) == {"channel_context": True}
+        assert await module_settings(db, bottle_id=bottle_id) == {
+            "channel_context": {"label": "quiet room"}
+        }
         with pytest.raises(aiosqlite.IntegrityError, match="append-only"):
             await db.execute("DELETE FROM configuration_events")
         await db.rollback()

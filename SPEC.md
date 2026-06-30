@@ -78,6 +78,10 @@ Examples:
 
 Modules can be enabled per bottle.
 
+Per-Bottle module settings are stored as validated JSON objects in SQLite and
+provided to every hook through `ctx.module_settings`. Configuration changes are
+operator-audited and require reconnecting a running Bottle to apply.
+
 ## Sediment
 
 Unreviewed memory candidates.

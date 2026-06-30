@@ -68,6 +68,7 @@ Modules are registered in source and enabled per Bottle in SQLite:
 ```bash
 bottled-ghosts modules 1
 bottled-ghosts module-toggle 1 channel_context on
+bottled-ghosts module-settings 1 channel_context '{"label":"quiet room"}' --actor aureate
 ```
 
 Reconnect the Bottle after changing a module toggle. Module hook failures are

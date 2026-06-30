@@ -3,7 +3,12 @@ import pytest
 from cellar.models import Bottle, IRCProfile, IncomingIRCMessage, LLMProfile
 from cellar.module_api import ModuleContext, ModuleRunner, NightlyContext
 from cellar.module_loader import load_modules
-from cellar.module_store import module_states, set_module_enabled
+from cellar.module_store import (
+    module_settings,
+    module_states,
+    set_module_enabled,
+    set_module_settings,
+)
 from cellar.storage import create_bottle, open_database
 
 
@@ -75,5 +80,29 @@ async def test_enabled_module_loads_from_sqlite(tmp_path) -> None:
         assert [type(module).__module__ for module in runner.modules] == [
             "modules.channel_context"
         ]
+        await set_module_settings(
+            db, bottle_id=bottle_id, module_name="channel_context",
+            settings={"label": "quiet room", "history": 5}, actor="test-operator",
+        )
+        assert await module_settings(db, bottle_id=bottle_id) == {
+            "channel_context": {"history": 5, "label": "quiet room"}
+        }
+        runner = await load_modules(db, bottle_id=bottle_id)
+        context = ModuleContext(
+            db=db, bottle=configured,
+            message=IncomingIRCMessage(nick="alice", hostmask=None, account=None,
+                                       target="#test", body="hello"),
+            user_id="user", source_message_id=1,
+        )
+        await runner.before_prompt(context)
+        assert context.module_settings == {
+            "channel_context": {"history": 5, "label": "quiet room"}
+        }
+        assert context.prompt_sections == ["IRC location: quiet room"]
+        event = await (await db.execute(
+            "SELECT actor, changed_fields FROM configuration_events"
+        )).fetchone()
+        assert event is not None
+        assert tuple(event) == ("test-operator", "module:channel_context:settings")
     finally:
         await db.close()

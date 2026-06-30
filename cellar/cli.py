@@ -40,7 +40,7 @@ async def async_main(args: argparse.Namespace) -> None:
         if args.command == "run":
             await run_bottle(db, await load_bottle(db, args.bottle_id))
         elif args.command == "run-all":
-            await run_bottles(db, await load_enabled_bottles(db))
+            await run_bottles(args.database, await load_enabled_bottles(db))
         elif args.command == "list":
             bottles = await list_bottles(db)
             if not bottles:

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from pathlib import Path
 
 import aiosqlite
 
@@ -15,7 +16,7 @@ from cellar.module_api import ModuleContext
 from cellar.module_loader import load_modules
 from cellar.prompt import build_prompt, read_soul
 from cellar.safety import Cooldown, sanitize
-from cellar.storage import log_message, recent_messages, search_messages
+from cellar.storage import log_message, open_database, recent_messages, search_messages
 
 logger = logging.getLogger(__name__)
 
@@ -101,10 +102,20 @@ async def run_bottle(db: aiosqlite.Connection, bottle: Bottle) -> None:
             delay = min(delay * 2, 60.0)
 
 
-async def run_bottles(db: aiosqlite.Connection, bottles: list[Bottle]) -> None:
+async def run_bottle_from_database(database: Path, bottle: Bottle) -> None:
+    db = await open_database(database)
+    try:
+        await run_bottle(db, bottle)
+    finally:
+        await db.close()
+
+
+async def run_bottles(database: Path, bottles: list[Bottle]) -> None:
     if not bottles:
         raise ValueError("no enabled Bottles are configured")
     logger.info("starting %d Bottle(s)", len(bottles))
     async with asyncio.TaskGroup() as tasks:
         for bottle in bottles:
-            tasks.create_task(run_bottle(db, bottle), name=f"bottle-{bottle.id}")
+            tasks.create_task(
+                run_bottle_from_database(database, bottle), name=f"bottle-{bottle.id}"
+            )

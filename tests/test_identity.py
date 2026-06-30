@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from cellar.identity import merge_users, resolve_user
@@ -86,3 +88,27 @@ async def test_explicit_uuid_merge_moves_identities(tmp_path) -> None:
         assert memory_owner is not None and memory_owner[0] == keep
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_connections_resolve_one_uuid(tmp_path) -> None:
+    database = tmp_path / "concurrent-identity.db"
+    first_db = await open_database(database)
+    second_db = await open_database(database)
+    try:
+        first, second = await asyncio.gather(
+            resolve_user(
+                first_db, network="testnet",
+                identity=identity("alice", account="alice_account", hostmask="u@host"),
+            ),
+            resolve_user(
+                second_db, network="testnet",
+                identity=identity("alice", account="alice_account", hostmask="u@host"),
+            ),
+        )
+        assert first == second
+        row = await (await first_db.execute("SELECT COUNT(*) FROM users")).fetchone()
+        assert row is not None and row[0] == 1
+    finally:
+        await first_db.close()
+        await second_db.close()

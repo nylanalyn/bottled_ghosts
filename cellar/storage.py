@@ -18,6 +18,8 @@ from cellar.models import (
 async def open_database(path: Path) -> aiosqlite.Connection:
     db = await aiosqlite.connect(path)
     db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA busy_timeout = 5000")
+    await db.execute("PRAGMA journal_mode = WAL")
     await migrate(db)
     return db
 

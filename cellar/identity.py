@@ -9,67 +9,73 @@ async def resolve_user(
     db: aiosqlite.Connection, *, network: str, identity: IncomingIRCMessage
 ) -> str:
     """Resolve strongest available IRC identity, creating a UUID when unknown."""
-    row = None
-    confidence = 0.5
-    if identity.account:
-        row = await _first(
-            db,
-            """SELECT user_id FROM user_identities
-               WHERE network = ? AND account = ? COLLATE NOCASE
-               ORDER BY last_seen DESC LIMIT 1""",
-            (network, identity.account),
-        )
-        confidence = 1.0
-    if row is None and identity.hostmask:
-        row = await _first(
-            db,
-            """SELECT user_id FROM user_identities
-               WHERE network = ? AND hostmask = ? COLLATE NOCASE
-               ORDER BY last_seen DESC LIMIT 1""",
-            (network, identity.hostmask),
-        )
-        confidence = 0.8
-    if row is None:
-        account_clause = "AND account IS NULL" if identity.account else ""
-        row = await _first(
-            db,
-            f"""SELECT user_id FROM user_identities
-                WHERE network = ? AND nick = ? COLLATE NOCASE {account_clause}
-                ORDER BY last_seen DESC LIMIT 1""",
-            (network, identity.nick),
-        )
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        row = None
         confidence = 0.5
+        if identity.account:
+            row = await _first(
+                db,
+                """SELECT user_id FROM user_identities
+                   WHERE network = ? AND account = ? COLLATE NOCASE
+                   ORDER BY last_seen DESC LIMIT 1""",
+                (network, identity.account),
+            )
+            confidence = 1.0
+        if row is None and identity.hostmask:
+            row = await _first(
+                db,
+                """SELECT user_id FROM user_identities
+                   WHERE network = ? AND hostmask = ? COLLATE NOCASE
+                   ORDER BY last_seen DESC LIMIT 1""",
+                (network, identity.hostmask),
+            )
+            confidence = 0.8
+        if row is None:
+            account_clause = "AND account IS NULL" if identity.account else ""
+            row = await _first(
+                db,
+                f"""SELECT user_id FROM user_identities
+                    WHERE network = ? AND nick = ? COLLATE NOCASE {account_clause}
+                    ORDER BY last_seen DESC LIMIT 1""",
+                (network, identity.nick),
+            )
+            confidence = 0.5
 
-    user_id = str(row["user_id"]) if row else str(uuid4())
-    if row is None:
-        await db.execute(
-            "INSERT INTO users(id, canonical_name) VALUES (?, ?)",
-            (user_id, identity.nick),
-        )
+        user_id = str(row["user_id"]) if row else str(uuid4())
+        if row is None:
+            await db.execute(
+                "INSERT INTO users(id, canonical_name) VALUES (?, ?)",
+                (user_id, identity.nick),
+            )
 
-    exact = await _first(
-        db,
-        """SELECT id FROM user_identities
-           WHERE user_id = ? AND network = ? AND nick = ? COLLATE NOCASE
-             AND COALESCE(account, '') = COALESCE(?, '') COLLATE NOCASE
-             AND COALESCE(hostmask, '') = COALESCE(?, '') COLLATE NOCASE
-           LIMIT 1""",
-        (user_id, network, identity.nick, identity.account, identity.hostmask),
-    )
-    if exact:
-        await db.execute(
-            "UPDATE user_identities SET last_seen = CURRENT_TIMESTAMP, confidence = ? WHERE id = ?",
-            (confidence, exact["id"]),
+        exact = await _first(
+            db,
+            """SELECT id FROM user_identities
+               WHERE user_id = ? AND network = ? AND nick = ? COLLATE NOCASE
+                 AND COALESCE(account, '') = COALESCE(?, '') COLLATE NOCASE
+                 AND COALESCE(hostmask, '') = COALESCE(?, '') COLLATE NOCASE
+               LIMIT 1""",
+            (user_id, network, identity.nick, identity.account, identity.hostmask),
         )
-    else:
-        await db.execute(
-            """INSERT INTO user_identities(
-                   user_id, network, nick, account, hostmask, confidence
-               ) VALUES (?, ?, ?, ?, ?, ?)""",
-            (user_id, network, identity.nick, identity.account, identity.hostmask, confidence),
-        )
-    await db.commit()
-    return user_id
+        if exact:
+            await db.execute(
+                """UPDATE user_identities
+                   SET last_seen = CURRENT_TIMESTAMP, confidence = ? WHERE id = ?""",
+                (confidence, exact["id"]),
+            )
+        else:
+            await db.execute(
+                """INSERT INTO user_identities(
+                       user_id, network, nick, account, hostmask, confidence
+                   ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (user_id, network, identity.nick, identity.account, identity.hostmask, confidence),
+            )
+        await db.commit()
+        return user_id
+    except Exception:
+        await db.rollback()
+        raise
 
 
 async def merge_users(db: aiosqlite.Connection, *, keep_id: str, merge_id: str) -> None:

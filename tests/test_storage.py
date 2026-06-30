@@ -21,6 +21,10 @@ from cellar.storage import (
 async def test_migration_configuration_and_logging(tmp_path) -> None:
     db = await open_database(tmp_path / "test.db")
     try:
+        journal_mode = await (await db.execute("PRAGMA journal_mode")).fetchone()
+        busy_timeout = await (await db.execute("PRAGMA busy_timeout")).fetchone()
+        assert journal_mode is not None and journal_mode[0] == "wal"
+        assert busy_timeout is not None and busy_timeout[0] == 5000
         bottle_id = await create_bottle(
             db,
             name="test",

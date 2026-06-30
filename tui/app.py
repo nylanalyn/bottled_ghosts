@@ -6,6 +6,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import (
     Button,
+    Checkbox,
     DataTable,
     Footer,
     Header,
@@ -26,7 +27,13 @@ from cellar.memory_store import (
 )
 from cellar.module_loader import available_modules
 from cellar.module_store import module_states, set_module_enabled
-from cellar.storage import open_database, set_bottle_enabled, set_memory_extraction
+from cellar.models import LogSearchResult
+from cellar.storage import (
+    open_database,
+    search_logs,
+    set_bottle_enabled,
+    set_memory_extraction,
+)
 from tui.data import dashboard_bottles, recent_bottle_messages
 
 
@@ -46,6 +53,11 @@ class BottledGhostsApp(App[None]):
     #save-memory { margin: 1; width: 20; }
     #module-title { height: 2; padding: 0 1; background: $panel; }
     #module-list { height: 1fr; border: solid $accent; }
+    #log-search-query { margin: 1; }
+    #log-search-scope { margin: 0 2; }
+    #run-log-search { margin: 1; width: 18; }
+    #log-results { height: 45%; border: solid $accent; }
+    #log-result-detail { height: 1fr; border: solid $secondary; padding: 1 2; }
     """
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -56,6 +68,7 @@ class BottledGhostsApp(App[None]):
         Binding("f2", "toggle_bottle", "Toggle Bottle"),
         Binding("f3", "toggle_extraction", "Toggle extraction"),
         Binding("f4", "toggle_module", "Toggle module"),
+        Binding("slash", "focus_log_search", "Search logs", key_display="/"),
     ]
 
     def __init__(self, database: Path, *, actor: str = "operator") -> None:
@@ -67,6 +80,7 @@ class BottledGhostsApp(App[None]):
         self.selected_memory_id: int | None = None
         self.selected_bottle_id: int | None = None
         self.selected_module_name: str | None = None
+        self.log_results: dict[int, LogSearchResult] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -95,6 +109,12 @@ class BottledGhostsApp(App[None]):
             with TabPane("Modules", id="modules-tab"):
                 yield Static("Select a Bottle on the Bottles tab.", id="module-title")
                 yield DataTable(id="module-list")
+            with TabPane("Log Search", id="log-search-tab"):
+                yield Input(placeholder="FTS search query", id="log-search-query")
+                yield Checkbox("Scope to selected Bottle", value=True, id="log-search-scope")
+                yield Button("Search logs", id="run-log-search", variant="primary")
+                yield DataTable(id="log-results")
+                yield Static("Enter a query to search indexed messages.", id="log-result-detail")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -118,6 +138,10 @@ class BottledGhostsApp(App[None]):
         module_table.cursor_type = "row"
         module_table.zebra_stripes = True
         module_table.add_columns("Module", "State")
+        log_table = self.query_one("#log-results", DataTable)
+        log_table.cursor_type = "row"
+        log_table.zebra_stripes = True
+        log_table.add_columns("ID", "Timestamp", "Bottle", "Location", "Speaker", "Message")
         await self.refresh_all()
         bottle_table.focus()
 
@@ -173,6 +197,8 @@ class BottledGhostsApp(App[None]):
             await self.show_memory(row_id)
         elif event.data_table.id == "module-list":
             self.selected_module_name = str(event.row_key.value)
+        elif event.data_table.id == "log-results":
+            self.show_log_result(int(str(event.row_key.value)))
 
     async def show_logs(self, bottle_id: int) -> None:
         if self.db is None:
@@ -281,6 +307,12 @@ class BottledGhostsApp(App[None]):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save-memory":
             await self.action_save_memory()
+        elif event.button.id == "run-log-search":
+            await self.action_search_logs()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "log-search-query":
+            await self.action_search_logs()
 
     async def action_save_memory(self) -> None:
         if self.db is None or self.selected_memory_id is None:
@@ -358,6 +390,44 @@ class BottledGhostsApp(App[None]):
                     "reconnect to apply")
         await self.refresh_modules()
         await self.refresh_dashboard()
+
+    def action_focus_log_search(self) -> None:
+        self.query_one("#log-search-query", Input).focus()
+
+    async def action_search_logs(self) -> None:
+        if self.db is None:
+            return
+        query = self.query_one("#log-search-query", Input).value.strip()
+        if not query:
+            self.notify("Enter a log search query", severity="warning")
+            return
+        scoped = self.query_one("#log-search-scope", Checkbox).value
+        bottle_id = self.selected_bottle_id if scoped else None
+        results = await search_logs(self.db, text=query, bot_id=bottle_id)
+        self.log_results = {result.id: result for result in results}
+        table = self.query_one("#log-results", DataTable)
+        table.clear()
+        for result in results:
+            snippet = result.body if len(result.body) <= 80 else f"{result.body[:77]}..."
+            table.add_row(
+                str(result.id), result.timestamp, str(result.bot_id),
+                f"{result.network} {result.channel}", result.speaker, snippet,
+                key=str(result.id),
+            )
+        if results:
+            self.show_log_result(results[0].id)
+        else:
+            self.query_one("#log-result-detail", Static).update("No matching messages.")
+
+    def show_log_result(self, message_id: int) -> None:
+        result = self.log_results.get(message_id)
+        if result is None:
+            return
+        self.query_one("#log-result-detail", Static).update(Text(
+            f"Message {result.id} — Bottle {result.bot_id}\n"
+            f"{result.timestamp} {result.network} {result.channel} <{result.speaker}>\n\n"
+            f"{result.body}"
+        ))
 
 
 def run_tui(database: Path, *, actor: str = "operator") -> None:

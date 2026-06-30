@@ -105,6 +105,9 @@ The Modules tab exposes configuration for the Bottle selected on the dashboard:
 `F2` toggles inclusion in `run-all`, `F3` toggles sediment extraction, and `F4`
 toggles the selected registered module. Running processes are not started or
 stopped implicitly; reconnect a Bottle to apply module changes.
+The Log Search tab queries the SQLite FTS index. Press `/` to focus its query
+field, optionally scope results to the Bottle selected on the dashboard, and
+select a result to inspect the complete stored message.
 
 To add or replace SASL credentials on an existing Bottle:
 

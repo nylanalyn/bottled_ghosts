@@ -1,5 +1,5 @@
 import pytest
-from textual.widgets import DataTable, Input, Select
+from textual.widgets import Checkbox, DataTable, Input, Select
 
 from cellar.identity import resolve_user
 from cellar.memory_store import list_memory_candidates, store_memory_candidates
@@ -78,6 +78,11 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         await app.action_toggle_module()
         await app.action_toggle_bottle()
         await pilot.pause()
+        app.query_one("#log-search-query", Input).value = "tea"
+        app.query_one("#log-search-scope", Checkbox).value = True
+        await app.action_search_logs()
+        await pilot.pause()
+        assert app.query_one("#log-results", DataTable).row_count == 1
 
     db = await open_database(database)
     try:

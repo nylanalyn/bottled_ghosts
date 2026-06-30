@@ -109,6 +109,7 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         await app.action_save_configuration()
         await pilot.pause()
         assert app.query_one("#bottles", DataTable).row_count == 2
+        assert app.query_one("#audit-list", DataTable).row_count == 4
 
     db = await open_database(database)
     try:

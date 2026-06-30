@@ -39,7 +39,7 @@ from cellar.storage import (
     set_bottle_enabled,
     set_memory_extraction,
 )
-from tui.data import dashboard_bottles, recent_bottle_messages
+from tui.data import DashboardAuditEvent, dashboard_audit_events, dashboard_bottles, recent_bottle_messages
 
 
 class BottledGhostsApp(App[None]):
@@ -67,6 +67,8 @@ class BottledGhostsApp(App[None]):
     #configuration-scroll Label { margin-top: 1; }
     #save-configuration { margin: 1 0 2 0; width: 26; }
     #new-configuration { margin: 1 1 2 0; width: 20; }
+    #audit-list { height: 55%; border: solid $accent; }
+    #audit-detail { height: 1fr; border: solid $secondary; padding: 1 2; }
     """
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -93,6 +95,7 @@ class BottledGhostsApp(App[None]):
         self.selected_module_name: str | None = None
         self.log_results: dict[int, LogSearchResult] = {}
         self.creating_bottle = False
+        self.audit_events: dict[str, DashboardAuditEvent] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -155,6 +158,9 @@ class BottledGhostsApp(App[None]):
                     yield Button("New Bottle", id="new-configuration")
                     yield Button("Save audited configuration", id="save-configuration",
                                  variant="primary")
+            with TabPane("Audit", id="audit-tab"):
+                yield DataTable(id="audit-list")
+                yield Static("No audit events loaded.", id="audit-detail")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -182,6 +188,10 @@ class BottledGhostsApp(App[None]):
         log_table.cursor_type = "row"
         log_table.zebra_stripes = True
         log_table.add_columns("ID", "Timestamp", "Bottle", "Location", "Speaker", "Message")
+        audit_table = self.query_one("#audit-list", DataTable)
+        audit_table.cursor_type = "row"
+        audit_table.zebra_stripes = True
+        audit_table.add_columns("Timestamp", "Actor", "Category", "Action", "Target")
         await self.refresh_all()
         bottle_table.focus()
 
@@ -199,6 +209,7 @@ class BottledGhostsApp(App[None]):
         await self.refresh_memories()
         await self.refresh_modules()
         await self.refresh_configuration()
+        await self.refresh_audit()
 
     async def refresh_dashboard(self) -> None:
         if self.db is None:
@@ -242,6 +253,8 @@ class BottledGhostsApp(App[None]):
             self.selected_module_name = str(event.row_key.value)
         elif event.data_table.id == "log-results":
             self.show_log_result(int(str(event.row_key.value)))
+        elif event.data_table.id == "audit-list":
+            self.show_audit_event(str(event.row_key.value))
 
     async def show_logs(self, bottle_id: int) -> None:
         if self.db is None:
@@ -379,6 +392,7 @@ class BottledGhostsApp(App[None]):
             return
         self.notify(f"Updated memory {self.selected_memory_id}")
         await self.refresh_memories()
+        await self.refresh_audit()
 
     async def refresh_modules(self) -> None:
         table = self.query_one("#module-list", DataTable)
@@ -564,6 +578,7 @@ class BottledGhostsApp(App[None]):
                     else "Configuration is unchanged")
         await self.refresh_dashboard()
         await self.refresh_configuration()
+        await self.refresh_audit()
 
     def action_new_configuration(self) -> None:
         self.creating_bottle = True
@@ -582,6 +597,32 @@ class BottledGhostsApp(App[None]):
             "Creating a Bottle without secrets. Add API keys or SASL credentials separately."
         )
         self.query_one("#config-name", Input).focus()
+
+    async def refresh_audit(self) -> None:
+        if self.db is None:
+            return
+        events = await dashboard_audit_events(self.db)
+        self.audit_events = {event.event_key: event for event in events}
+        table = self.query_one("#audit-list", DataTable)
+        table.clear()
+        for event in events:
+            table.add_row(
+                event.created_at, event.actor, event.category, event.action, event.target,
+                key=event.event_key,
+            )
+        if events:
+            self.show_audit_event(events[0].event_key)
+        else:
+            self.query_one("#audit-detail", Static).update("No audit events recorded.")
+
+    def show_audit_event(self, event_key: str) -> None:
+        event = self.audit_events.get(event_key)
+        if event is None:
+            return
+        self.query_one("#audit-detail", Static).update(Text(
+            f"{event.created_at} — {event.actor}\n"
+            f"{event.category} / {event.action} / {event.target}\n\n{event.details or 'No details.'}"
+        ))
 
 
 def run_tui(database: Path, *, actor: str = "operator") -> None:

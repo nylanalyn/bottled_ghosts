@@ -24,6 +24,16 @@ class DashboardMessage(BaseModel):
     body: str
 
 
+class DashboardAuditEvent(BaseModel):
+    event_key: str
+    created_at: str
+    actor: str
+    category: str
+    action: str
+    target: str
+    details: str
+
+
 async def dashboard_bottles(db: aiosqlite.Connection) -> list[DashboardBottle]:
     cursor = await db.execute(
         """SELECT b.id, b.name, b.enabled, b.extract_memories,
@@ -59,3 +69,28 @@ async def recent_bottle_messages(
            ) ORDER BY id""", (bottle_id, limit),
     )
     return [DashboardMessage(**dict(row)) for row in await cursor.fetchall()]
+
+
+async def dashboard_audit_events(
+    db: aiosqlite.Connection, *, limit: int = 100
+) -> list[DashboardAuditEvent]:
+    cursor = await db.execute(
+        """SELECT * FROM (
+               SELECT 'memory-' || id AS event_key, created_at, actor,
+                      'memory' AS category, action,
+                      entity_type || ' ' || entity_id AS target,
+                      TRIM(
+                          COALESCE(old_status || ' -> ' || new_status, '') ||
+                          CASE WHEN new_text IS NOT NULL
+                               THEN ' ' || COALESCE(old_text, '') || ' -> ' || new_text
+                               ELSE '' END
+                      ) AS details
+               FROM audit_events
+               UNION ALL
+               SELECT 'configuration-' || id, created_at, actor,
+                      'configuration', 'change', 'Bottle ' || bot_id,
+                      'changed: ' || changed_fields
+               FROM configuration_events
+           ) ORDER BY created_at DESC, event_key DESC LIMIT ?""", (limit,),
+    )
+    return [DashboardAuditEvent(**dict(row)) for row in await cursor.fetchall()]

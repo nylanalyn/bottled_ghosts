@@ -125,6 +125,8 @@ bottled-ghosts set-api-key 1 --actor aureate
 bottled-ghosts set-server-password 1 --actor aureate
 bottled-ghosts set-sasl 1 --actor aureate
 ```
+The Audit tab combines memory-review and Bottle-configuration audit streams for
+inspection without duplicating them into another state store.
 
 To add or replace SASL credentials on an existing Bottle:
 

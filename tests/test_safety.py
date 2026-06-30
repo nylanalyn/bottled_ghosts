@@ -1,4 +1,4 @@
-from cellar.safety import sanitize
+from cellar.safety import sanitize, strip_private_reasoning
 
 
 def test_sanitize_strips_thoughts_and_enforces_limits() -> None:
@@ -8,3 +8,7 @@ def test_sanitize_strips_thoughts_and_enforces_limits() -> None:
 
 def test_sanitize_drops_fenced_content() -> None:
     assert sanitize("```python\nbad()\n```\nokay", max_lines=2, max_chars=20) == ["okay"]
+
+
+def test_strip_private_reasoning_preserves_summary_layout() -> None:
+    assert strip_private_reasoning("<think>private</think>\nUseful\nsummary") == "Useful\nsummary"

@@ -5,6 +5,8 @@ from getpass import getpass
 from pathlib import Path
 
 from cellar.configure import ask, collect_configuration
+from cellar.dream_store import list_dreams
+from cellar.dreams import run_dream
 from cellar.runtime import run_bottle, run_bottles
 from cellar.memory_store import (
     approve_memory_candidate,
@@ -116,6 +118,27 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"{args.module_name} {'enabled' if enabled else 'disabled'} "
                   f"for Bottle {args.bottle_id}; reconnect to apply")
+        elif args.command == "dream":
+            summary = await run_dream(
+                db, bottle=await load_bottle(db, args.bottle_id), hours=args.hours,
+            )
+            print(f"Stored dream {summary.id}" if summary else "No messages in dream period")
+        elif args.command == "dream-all":
+            for bottle in await load_enabled_bottles(db):
+                try:
+                    summary = await run_dream(db, bottle=bottle, hours=args.hours)
+                    if summary:
+                        print(f"Bottle {bottle.id}: stored dream {summary.id}")
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "dream failed for Bottle %d (%s); continuing", bottle.id, bottle.name
+                    )
+        elif args.command == "dreams":
+            for summary in await list_dreams(
+                db, bot_id=args.bottle_id, limit=args.limit,
+            ):
+                print(f"{summary.id}\t{summary.period_start}\t{summary.period_end}\n"
+                      f"  {summary.summary}")
     finally:
         await db.close()
 
@@ -170,6 +193,14 @@ def main() -> None:
     module_toggle.add_argument("bottle_id", type=int)
     module_toggle.add_argument("module_name")
     module_toggle.add_argument("state", choices=("on", "off"))
+    dream_parser = commands.add_parser("dream", help="summarize one Bottle's recent activity")
+    dream_parser.add_argument("bottle_id", type=int)
+    dream_parser.add_argument("--hours", type=int, default=24)
+    dream_all = commands.add_parser("dream-all", help="summarize every enabled Bottle")
+    dream_all.add_argument("--hours", type=int, default=24)
+    dreams_parser = commands.add_parser("dreams", help="list stored dreams for a Bottle")
+    dreams_parser.add_argument("bottle_id", type=int)
+    dreams_parser.add_argument("--limit", type=int, default=20)
     run_parser = commands.add_parser("run", help="run one configured Bottle")
     run_parser.add_argument("bottle_id", type=int)
     args = parser.parse_args()

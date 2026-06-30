@@ -6,9 +6,13 @@ THINK_RE = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL
 TAG_RE = re.compile(r"</?think\b[^>]*>", re.IGNORECASE)
 
 
-def sanitize(text: str, *, max_lines: int, max_chars: int) -> list[str]:
+def strip_private_reasoning(text: str) -> str:
     text = THINK_RE.sub("", text)
-    text = TAG_RE.sub("", text)
+    return TAG_RE.sub("", text).strip()
+
+
+def sanitize(text: str, *, max_lines: int, max_chars: int) -> list[str]:
+    text = strip_private_reasoning(text)
     text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     lines: list[str] = []
     for raw in text.splitlines():

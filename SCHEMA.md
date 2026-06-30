@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 006.
+The schema below reflects migration 007.
 
 ## schema_migrations
 
@@ -66,6 +66,10 @@ Allowed actions are `approve`, `reject`, and `edit`. Allowed entity types are `m
 
 Stores per-Bottle module enablement and future module settings. Columns: `bot_id INTEGER NOT NULL`, `module_name TEXT NOT NULL`, `enabled INTEGER NOT NULL DEFAULT 1`, `settings_json TEXT NOT NULL DEFAULT '{}'`. Primary key: `(bot_id, module_name)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `bot_modules_enabled_idx(bot_id, enabled, module_name)`.
 
+## summaries
+
+Stores Bottle dream summaries with explicit coverage periods. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `period_start TEXT NOT NULL`, `period_end TEXT NOT NULL`, `summary TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `summaries_bot_period_idx(bot_id, period_end DESC, id DESC)`.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -74,3 +78,4 @@ Stores per-Bottle module enablement and future module settings. Columns: `bot_id
 - 004: Add per-Bottle extraction control and the pending memory-candidate review queue.
 - 005: Add approved user memories and append-only review/edit audit events.
 - 006: Add canonical per-Bottle module enablement and settings.
+- 007: Add persistent Bottle dream summaries with explicit period boundaries.

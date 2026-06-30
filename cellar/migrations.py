@@ -207,9 +207,27 @@ async def migration_006(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_007(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE summaries (
+            id INTEGER PRIMARY KEY,
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            period_start TEXT NOT NULL,
+            period_end TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK (period_start < period_end)
+        );
+        CREATE INDEX summaries_bot_period_idx
+            ON summaries(bot_id, period_end DESC, id DESC);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
-    migration_006,
+    migration_006, migration_007,
 )
 
 

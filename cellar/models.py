@@ -116,3 +116,12 @@ class LogSearchResult(BaseModel):
     speaker: str
     body: str
     bot_id: int
+
+
+class DreamSummary(BaseModel):
+    id: int
+    bot_id: int
+    period_start: str
+    period_end: str
+    summary: str
+    created_at: str

@@ -1,4 +1,4 @@
-from cellar.module_api import ModuleContext
+from cellar.module_api import ModuleContext, NightlyContext
 
 
 class Module:
@@ -13,5 +13,5 @@ class Module:
     async def after_response(self, ctx: ModuleContext) -> None:
         return None
 
-    async def nightly(self, ctx: ModuleContext) -> None:
+    async def nightly(self, ctx: NightlyContext) -> None:
         return None

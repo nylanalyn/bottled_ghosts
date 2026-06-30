@@ -75,6 +75,18 @@ bottled-ghosts module-toggle 1 channel_context on
 Reconnect the Bottle after changing a module toggle. Module hook failures are
 logged and isolated from other modules and the IRC runtime.
 
+Dreaming is an explicit job rather than a hidden background scheduler:
+
+```bash
+bottled-ghosts dream 1 --hours 24
+bottled-ghosts dream-all --hours 24
+bottled-ghosts dreams 1
+```
+
+Schedule `dream-all` with cron or a systemd timer for nightly operation. Each
+summary records its exact period in SQLite, invokes enabled modules' `nightly`
+hooks, and becomes retrieval context for later replies.
+
 To add or replace SASL credentials on an existing Bottle:
 
 ```bash

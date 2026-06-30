@@ -1,7 +1,7 @@
 import pytest
 
 from cellar.models import Bottle, IRCProfile, IncomingIRCMessage, LLMProfile
-from cellar.module_api import ModuleContext, ModuleRunner
+from cellar.module_api import ModuleContext, ModuleRunner, NightlyContext
 from cellar.module_loader import load_modules
 from cellar.module_store import module_states, set_module_enabled
 from cellar.storage import create_bottle, open_database
@@ -17,7 +17,7 @@ class BrokenModule:
     async def after_response(self, ctx: ModuleContext) -> None:
         raise RuntimeError("broken")
 
-    async def nightly(self, ctx: ModuleContext) -> None:
+    async def nightly(self, ctx: NightlyContext) -> None:
         raise RuntimeError("broken")
 
 
@@ -31,7 +31,7 @@ class WorkingModule:
     async def after_response(self, ctx: ModuleContext) -> None:
         return None
 
-    async def nightly(self, ctx: ModuleContext) -> None:
+    async def nightly(self, ctx: NightlyContext) -> None:
         return None
 
 

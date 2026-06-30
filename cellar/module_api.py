@@ -20,11 +20,20 @@ class ModuleContext:
     response: str | None = None
 
 
+@dataclass
+class NightlyContext:
+    db: aiosqlite.Connection
+    bottle: Bottle
+    period_start: str
+    period_end: str
+    summary: str
+
+
 class ModuleContract(Protocol):
     async def on_message(self, ctx: ModuleContext) -> None: ...
     async def before_prompt(self, ctx: ModuleContext) -> None: ...
     async def after_response(self, ctx: ModuleContext) -> None: ...
-    async def nightly(self, ctx: ModuleContext) -> None: ...
+    async def nightly(self, ctx: NightlyContext) -> None: ...
 
 
 class ModuleRunner:
@@ -40,10 +49,10 @@ class ModuleRunner:
     async def after_response(self, ctx: ModuleContext) -> None:
         await self._run("after_response", ctx)
 
-    async def nightly(self, ctx: ModuleContext) -> None:
+    async def nightly(self, ctx: NightlyContext) -> None:
         await self._run("nightly", ctx)
 
-    async def _run(self, hook: str, ctx: ModuleContext) -> None:
+    async def _run(self, hook: str, ctx: ModuleContext | NightlyContext) -> None:
         for module in self.modules:
             try:
                 callback = getattr(module, hook)

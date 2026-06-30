@@ -8,6 +8,7 @@ from cellar.identity import resolve_user
 from cellar.llm import complete
 from cellar.memory import extract_candidates
 from cellar.memory_store import approved_memory_texts, store_memory_candidates
+from cellar.dream_store import recent_dream_texts
 from cellar.models import Bottle, IRCMessage, IncomingIRCMessage
 from cellar.module_api import ModuleContext
 from cellar.module_loader import load_modules
@@ -48,9 +49,11 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
             text=body, exclude_message_id=message_id,
         )
         memories = await approved_memory_texts(db, user_id=user_id)
+        dreams = await recent_dream_texts(db, bot_id=bottle.id)
         await modules.before_prompt(module_context)
         prompt = build_prompt(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,
+            dreams=dreams,
             relevant=relevant, history=history[:-1], speaker=speaker, body=body,
         )
         response = await complete(bottle.llm, prompt)

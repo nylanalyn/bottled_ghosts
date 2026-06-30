@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 005.
+The schema below reflects migration 006.
 
 ## schema_migrations
 
@@ -62,6 +62,10 @@ Append-only operator mutation history. Columns: `id INTEGER PRIMARY KEY`, `actio
 
 Allowed actions are `approve`, `reject`, and `edit`. Allowed entity types are `memory_candidate` and `user_memory`. Index: `audit_events_entity_idx(entity_type, entity_id, id DESC)`. The `audit_events_no_update` and `audit_events_no_delete` triggers enforce append-only storage.
 
+## bot_modules
+
+Stores per-Bottle module enablement and future module settings. Columns: `bot_id INTEGER NOT NULL`, `module_name TEXT NOT NULL`, `enabled INTEGER NOT NULL DEFAULT 1`, `settings_json TEXT NOT NULL DEFAULT '{}'`. Primary key: `(bot_id, module_name)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `bot_modules_enabled_idx(bot_id, enabled, module_name)`.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -69,3 +73,4 @@ Allowed actions are `approve`, `reject`, and `edit`. Allowed entity types are `m
 - 003: Add UUID users, observed IRC identities, message ownership, and FTS5 message search.
 - 004: Add per-Bottle extraction control and the pending memory-candidate review queue.
 - 005: Add approved user memories and append-only review/edit audit events.
+- 006: Add canonical per-Bottle module enablement and settings.

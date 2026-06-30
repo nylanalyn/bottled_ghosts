@@ -65,6 +65,16 @@ Only approved memories are retrieved into prompts. Search raw logs with:
 bottled-ghosts logs-search "brass telescope" --bottle 1 --channel '#fractalsignal'
 ```
 
+Modules are registered in source and enabled per Bottle in SQLite:
+
+```bash
+bottled-ghosts modules 1
+bottled-ghosts module-toggle 1 channel_context on
+```
+
+Reconnect the Bottle after changing a module toggle. Module hook failures are
+logged and isolated from other modules and the IRC runtime.
+
 To add or replace SASL credentials on an existing Bottle:
 
 ```bash

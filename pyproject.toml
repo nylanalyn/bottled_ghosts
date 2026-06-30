@@ -16,7 +16,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 bottled-ghosts = "cellar.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cellar"]
+packages = ["cellar", "modules"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -13,6 +13,8 @@ from cellar.memory_store import (
     list_user_memories,
     reject_memory_candidate,
 )
+from cellar.module_loader import available_modules
+from cellar.module_store import module_states, set_module_enabled
 from cellar.storage import (
     create_bottle,
     list_bottles,
@@ -101,6 +103,19 @@ async def async_main(args: argparse.Namespace) -> None:
             ):
                 print(f"{result.id}\t{result.timestamp}\t{result.network}\t{result.channel}\t"
                       f"<{result.speaker}> {result.body}")
+        elif args.command == "modules":
+            states = await module_states(db, bottle_id=args.bottle_id)
+            for name in available_modules():
+                print(f"{name}\t{'enabled' if states.get(name, False) else 'disabled'}")
+        elif args.command == "module-toggle":
+            if args.module_name not in available_modules():
+                raise ValueError(f"unknown module: {args.module_name}")
+            enabled = args_enabled(args.state)
+            await set_module_enabled(
+                db, bottle_id=args.bottle_id, module_name=args.module_name, enabled=enabled,
+            )
+            print(f"{args.module_name} {'enabled' if enabled else 'disabled'} "
+                  f"for Bottle {args.bottle_id}; reconnect to apply")
     finally:
         await db.close()
 
@@ -149,6 +164,12 @@ def main() -> None:
     logs_search.add_argument("--network")
     logs_search.add_argument("--channel")
     logs_search.add_argument("--limit", type=int, default=20)
+    modules_parser = commands.add_parser("modules", help="list module state for a Bottle")
+    modules_parser.add_argument("bottle_id", type=int)
+    module_toggle = commands.add_parser("module-toggle", help="enable or disable a module")
+    module_toggle.add_argument("bottle_id", type=int)
+    module_toggle.add_argument("module_name")
+    module_toggle.add_argument("state", choices=("on", "off"))
     run_parser = commands.add_parser("run", help="run one configured Bottle")
     run_parser.add_argument("bottle_id", type=int)
     args = parser.parse_args()

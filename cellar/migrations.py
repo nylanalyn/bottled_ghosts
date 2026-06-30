@@ -191,8 +191,25 @@ async def migration_005(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_006(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE bot_modules (
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            module_name TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+            settings_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (bot_id, module_name)
+        );
+        CREATE INDEX bot_modules_enabled_idx
+            ON bot_modules(bot_id, enabled, module_name);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
+    migration_006,
 )
 
 

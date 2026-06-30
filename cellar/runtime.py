@@ -9,6 +9,8 @@ from cellar.llm import complete
 from cellar.memory import extract_candidates
 from cellar.memory_store import approved_memory_texts, store_memory_candidates
 from cellar.models import Bottle, IRCMessage, IncomingIRCMessage
+from cellar.module_api import ModuleContext
+from cellar.module_loader import load_modules
 from cellar.prompt import build_prompt, read_soul
 from cellar.safety import Cooldown, sanitize
 from cellar.storage import log_message, recent_messages, search_messages
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
     soul = read_soul(bottle.soul_prompt_path)
     cooldown = Cooldown(bottle.cooldown_seconds)
+    modules = await load_modules(db, bottle_id=bottle.id)
     client: IRCClient
 
     async def on_message(message: IncomingIRCMessage) -> None:
@@ -27,6 +30,11 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
                               speaker=message.nick, body=message.body, bot_id=bottle.id,
                               user_id=user_id)
         message_id = await log_message(db, incoming)
+        module_context = ModuleContext(
+            db=db, bottle=bottle, message=message, user_id=user_id,
+            source_message_id=message_id,
+        )
+        await modules.on_message(module_context)
         speaker, channel, body = message.nick, message.target, message.body
         direct_message = channel.casefold() == bottle.irc.nick.casefold()
         if not direct_message and bottle.irc.nick.casefold() not in body.casefold():
@@ -40,9 +48,14 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
             text=body, exclude_message_id=message_id,
         )
         memories = await approved_memory_texts(db, user_id=user_id)
-        prompt = build_prompt(soul=soul, memories=memories, relevant=relevant, history=history[:-1],
-                              speaker=speaker, body=body)
+        await modules.before_prompt(module_context)
+        prompt = build_prompt(
+            soul=soul, module_state=module_context.prompt_sections, memories=memories,
+            relevant=relevant, history=history[:-1], speaker=speaker, body=body,
+        )
         response = await complete(bottle.llm, prompt)
+        module_context.response = response
+        await modules.after_response(module_context)
         lines = sanitize(response, max_lines=bottle.max_lines, max_chars=bottle.max_chars)
         if not lines:
             logger.warning("LLM response was empty after sanitization")

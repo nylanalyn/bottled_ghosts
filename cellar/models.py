@@ -89,6 +89,11 @@ class ExtractedMemories(BaseModel):
     candidates: list[ExtractedMemory] = Field(max_length=3)
 
 
+class MemorySource(BaseModel):
+    message_id: int
+    body: str
+
+
 class MemoryCandidateView(BaseModel):
     id: int
     user_id: str
@@ -99,6 +104,7 @@ class MemoryCandidateView(BaseModel):
     memory_type: MemoryType
     confidence: float
     status: Literal["pending", "approved", "rejected"]
+    source_messages: list[MemorySource] = Field(default_factory=list)
 
 
 class UserMemory(BaseModel):

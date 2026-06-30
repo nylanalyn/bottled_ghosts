@@ -93,10 +93,14 @@ async def async_main(args: argparse.Namespace) -> None:
             print(f"Bottle {args.bottle_id} {'enabled' if enabled else 'disabled'}")
         elif args.command == "sediment-list":
             for candidate in await list_memory_candidates(db, status=args.status):
+                sources = "\n".join(
+                    f"  source {source.message_id}: {source.body}"
+                    for source in candidate.source_messages
+                )
                 print(f"{candidate.id}\t{candidate.status}\t{candidate.memory_type}\t"
                       f"{candidate.confidence:.2f}\t{candidate.canonical_name}\t"
                       f"{candidate.user_id}\n  candidate: {candidate.candidate_text}\n"
-                      f"  source {candidate.source_message_id}: {candidate.source_body}")
+                      f"{sources}")
         elif args.command == "sediment-approve":
             memory_id = await approve_memory_candidate(
                 db, candidate_id=args.candidate_id, actor=args.actor

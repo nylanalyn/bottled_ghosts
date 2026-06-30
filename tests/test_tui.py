@@ -44,7 +44,7 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
                            body="I like tea", bot_id=bottle_id, user_id=user_id),
         )
         await store_memory_candidates(
-            db, user_id=user_id, source_message_id=source_id,
+            db, user_id=user_id, source_message_ids=[source_id],
             candidates=[ExtractedMemory(
                 text="Likes tea", type="preference", confidence=0.9,
             )],

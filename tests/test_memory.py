@@ -68,10 +68,10 @@ async def test_pending_candidate_keeps_source_and_deduplicates(tmp_path) -> None
         )
         candidate = ExtractedMemory(text="Likes cheese", type="preference", confidence=0.9)
         assert await store_memory_candidates(
-            db, user_id=user_id, source_message_id=message_id, candidates=[candidate]
+            db, user_id=user_id, source_message_ids=[message_id], candidates=[candidate]
         ) == 1
         assert await store_memory_candidates(
-            db, user_id=user_id, source_message_id=message_id, candidates=[candidate]
+            db, user_id=user_id, source_message_ids=[message_id], candidates=[candidate]
         ) == 0
         row = await (await db.execute(
             """SELECT user_id, source_message_id, memory_type, status
@@ -83,6 +83,9 @@ async def test_pending_candidate_keeps_source_and_deduplicates(tmp_path) -> None
         pending = await list_memory_candidates(db)
         assert len(pending) == 1
         assert pending[0].source_body == "I love cheese"
+        assert [(source.message_id, source.body) for source in pending[0].source_messages] == [
+            (message_id, "I love cheese")
+        ]
         memory_id = await approve_memory_candidate(
             db, candidate_id=pending[0].id, actor="test-operator"
         )
@@ -107,7 +110,7 @@ async def test_pending_candidate_keeps_source_and_deduplicates(tmp_path) -> None
             text="Tired today", type="temporary_state", confidence=0.7
         )
         await store_memory_candidates(
-            db, user_id=user_id, source_message_id=second_message_id, candidates=[temporary]
+            db, user_id=user_id, source_message_ids=[second_message_id], candidates=[temporary]
         )
         rejected = (await list_memory_candidates(db))[0]
         await reject_memory_candidate(db, candidate_id=rejected.id, actor="test-operator")
@@ -118,7 +121,7 @@ async def test_pending_candidate_keeps_source_and_deduplicates(tmp_path) -> None
                        body="I am busy today", bot_id=bottle_id, user_id=user_id),
         )
         await store_memory_candidates(
-            db, user_id=user_id, source_message_id=third_message_id,
+            db, user_id=user_id, source_message_ids=[third_message_id],
             candidates=[ExtractedMemory(
                 text="Busy today", type="temporary_state", confidence=0.8,
             )],

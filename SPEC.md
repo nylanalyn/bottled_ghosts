@@ -295,6 +295,10 @@ Fields:
 * confidence
 * status
 
+### memory_candidate_sources
+
+Ordered links from each candidate to every message used during extraction.
+
 ### summaries
 
 Nightly dreams.

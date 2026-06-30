@@ -207,6 +207,11 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
                JOIN messages m ON m.id = c.source_message_id"""
         )).fetchone()
         assert source is not None and source[0] == "second line"
+        provenance = await (await db.execute(
+            """SELECT m.body FROM memory_candidate_sources s
+               JOIN messages m ON m.id = s.message_id ORDER BY s.ordinal"""
+        )).fetchall()
+        assert [row[0] for row in provenance] == ["ghost: first line", "second line"]
     finally:
         await db.close()
 

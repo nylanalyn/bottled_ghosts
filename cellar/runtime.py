@@ -89,7 +89,7 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
                 candidates = await extract_candidates(bottle.llm, speaker=speaker, body=body)
                 async with database_lock:
                     inserted = await store_memory_candidates(
-                        db, user_id=user_id, source_message_id=latest.message_id,
+                        db, user_id=user_id, source_message_ids=message_ids,
                         candidates=candidates,
                     )
                 logger.info("stored %d pending memory candidate(s) for %s", inserted, speaker)

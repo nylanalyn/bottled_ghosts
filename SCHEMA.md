@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 010.
+The schema below reflects migration 011.
 
 ## schema_migrations
 
@@ -50,6 +50,10 @@ Foreign keys: `user_id` references `users(id)` with cascading deletion; `source_
 
 Allowed `memory_type` values are `preference`, `project`, `relationship`, `identity`, and `temporary_state`. Allowed statuses are `pending`, `approved`, and `rejected`.
 
+## memory_candidate_sources
+
+Stores the complete ordered message provenance used to extract a memory candidate. Columns: `candidate_id INTEGER NOT NULL`, `message_id INTEGER NOT NULL`, `ordinal INTEGER NOT NULL`. Primary key: `(candidate_id, message_id)`. Unique constraint: `(candidate_id, ordinal)`. Foreign keys reference `memory_candidates(id)` and `messages(id)` with cascading deletion. Index: `memory_candidate_sources_message_idx(message_id, candidate_id)`.
+
 ## user_memories
 
 Stores operator-approved long-term memory. Columns: `id INTEGER PRIMARY KEY`, `user_id TEXT NOT NULL`, `source_candidate_id INTEGER UNIQUE`, `memory_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_used_at TEXT`, `expires_at TEXT`.
@@ -86,3 +90,4 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 - 008: Add append-only, secret-free Bottle configuration audit events.
 - 009: Add the per-Bottle listening-window duration.
 - 010: Add explicit temporary-memory expiry and expiry audit fields.
+- 011: Add ordered multi-message provenance for memory candidates.

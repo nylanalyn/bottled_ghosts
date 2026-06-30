@@ -268,9 +268,29 @@ async def migration_010(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_011(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE memory_candidate_sources (
+            candidate_id INTEGER NOT NULL
+                REFERENCES memory_candidates(id) ON DELETE CASCADE,
+            message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+            PRIMARY KEY (candidate_id, message_id),
+            UNIQUE(candidate_id, ordinal)
+        );
+        CREATE INDEX memory_candidate_sources_message_idx
+            ON memory_candidate_sources(message_id, candidate_id);
+        INSERT INTO memory_candidate_sources(candidate_id, message_id, ordinal)
+            SELECT id, source_message_id, 0 FROM memory_candidates;
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
+    migration_011,
 )
 
 

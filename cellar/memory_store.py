@@ -1,8 +1,11 @@
+import json
+
 import aiosqlite
 
 from cellar.models import (
     ExtractedMemory,
     MemoryCandidateView,
+    MemorySource,
     MemoryType,
     UserMemory,
     UserMemoryView,
@@ -12,9 +15,12 @@ TEMPORARY_MEMORY_HOURS = 24
 
 
 async def store_memory_candidates(
-    db: aiosqlite.Connection, *, user_id: str, source_message_id: int,
+    db: aiosqlite.Connection, *, user_id: str, source_message_ids: list[int],
     candidates: list[ExtractedMemory],
 ) -> int:
+    if not source_message_ids:
+        raise ValueError("memory candidates require at least one source message")
+    source_message_id = source_message_ids[-1]
     inserted = 0
     try:
         for candidate in candidates:
@@ -25,6 +31,20 @@ async def store_memory_candidates(
                 (user_id, source_message_id, candidate.text, candidate.type, candidate.confidence),
             )
             inserted += max(cursor.rowcount, 0)
+            candidate_row = await (await db.execute(
+                """SELECT id FROM memory_candidates
+                   WHERE user_id = ? AND source_message_id = ? AND candidate_text = ?""",
+                (user_id, source_message_id, candidate.text),
+            )).fetchone()
+            if candidate_row is None:
+                raise RuntimeError("stored memory candidate could not be reloaded")
+            for ordinal, message_id in enumerate(source_message_ids):
+                await db.execute(
+                    """INSERT OR IGNORE INTO memory_candidate_sources(
+                           candidate_id, message_id, ordinal
+                       ) VALUES (?, ?, ?)""",
+                    (candidate_row["id"], message_id, ordinal),
+                )
         await db.commit()
     except Exception:
         await db.rollback()
@@ -36,19 +56,22 @@ async def list_memory_candidates(
     db: aiosqlite.Connection, *, status: str = "pending"
 ) -> list[MemoryCandidateView]:
     cursor = await db.execute(
-        """SELECT c.*, u.canonical_name, m.body AS source_body
+        """SELECT c.*, u.canonical_name, m.body AS source_body,
+                  (SELECT json_group_array(json_object(
+                       'message_id', sources.message_id, 'body', sources.body
+                   )) FROM (
+                       SELECT sm.id AS message_id, sm.body
+                       FROM memory_candidate_sources cs
+                       JOIN messages sm ON sm.id = cs.message_id
+                       WHERE cs.candidate_id = c.id ORDER BY cs.ordinal
+                   ) AS sources) AS source_messages_json
            FROM memory_candidates c
            JOIN users u ON u.id = c.user_id
            JOIN messages m ON m.id = c.source_message_id
            WHERE c.status = ? ORDER BY c.created_at, c.id""", (status,),
     )
     return [
-        MemoryCandidateView(
-            id=row["id"], user_id=row["user_id"], canonical_name=row["canonical_name"],
-            source_message_id=row["source_message_id"], source_body=row["source_body"],
-            candidate_text=row["candidate_text"], memory_type=row["memory_type"],
-            confidence=row["confidence"], status=row["status"],
-        )
+        _candidate_from_row(row)
         for row in await cursor.fetchall()
     ]
 
@@ -57,14 +80,22 @@ async def get_memory_candidate(
     db: aiosqlite.Connection, *, candidate_id: int
 ) -> MemoryCandidateView | None:
     cursor = await db.execute(
-        """SELECT c.*, u.canonical_name, m.body AS source_body
+        """SELECT c.*, u.canonical_name, m.body AS source_body,
+                  (SELECT json_group_array(json_object(
+                       'message_id', sources.message_id, 'body', sources.body
+                   )) FROM (
+                       SELECT sm.id AS message_id, sm.body
+                       FROM memory_candidate_sources cs
+                       JOIN messages sm ON sm.id = cs.message_id
+                       WHERE cs.candidate_id = c.id ORDER BY cs.ordinal
+                   ) AS sources) AS source_messages_json
            FROM memory_candidates c
            JOIN users u ON u.id = c.user_id
            JOIN messages m ON m.id = c.source_message_id
            WHERE c.id = ?""", (candidate_id,),
     )
     row = await cursor.fetchone()
-    return MemoryCandidateView(**dict(row)) if row is not None else None
+    return _candidate_from_row(row) if row is not None else None
 
 
 async def approve_memory_candidate(
@@ -259,3 +290,10 @@ async def _temporary_expiry(db: aiosqlite.Connection) -> str:
     if row is None:
         raise RuntimeError("SQLite did not return a temporary memory expiry")
     return str(row[0])
+
+
+def _candidate_from_row(row: aiosqlite.Row) -> MemoryCandidateView:
+    values = dict(row)
+    sources = json.loads(values.pop("source_messages_json") or "[]")
+    values["source_messages"] = [MemorySource(**source) for source in sources]
+    return MemoryCandidateView(**values)

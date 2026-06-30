@@ -302,11 +302,14 @@ class BottledGhostsApp(App[None]):
         candidate = await get_memory_candidate(self.db, candidate_id=candidate_id)
         if candidate is None:
             return
+        sources = "\n".join(
+            f"Message {source.message_id}: {source.body}"
+            for source in candidate.source_messages
+        )
         self.query_one("#candidate-detail", Static).update(Text(
             f"Candidate {candidate.id} for {candidate.canonical_name} ({candidate.user_id})\n\n"
             f"Proposed {candidate.memory_type} [{candidate.confidence:.2f}]:\n"
-            f"{candidate.candidate_text}\n\nSource message {candidate.source_message_id}:\n"
-            f"{candidate.source_body}"
+            f"{candidate.candidate_text}\n\nSource messages:\n{sources}"
         ))
 
     async def action_approve_candidate(self) -> None:

@@ -81,6 +81,7 @@ async def create_bottle(
     max_chars: int = 400,
     cooldown_seconds: float = 1.0,
     extract_memories: bool = False,
+    actor: str | None = None,
 ) -> int:
     """Persist one complete Bottle configuration as a visible transaction."""
     try:
@@ -107,27 +108,79 @@ async def create_bottle(
             (name, str(soul_prompt_path), llm_cursor.lastrowid, irc_cursor.lastrowid,
              max_lines, max_chars, cooldown_seconds, extract_memories),
         )
+        if bottle_cursor.lastrowid is None:
+            raise RuntimeError("SQLite did not return a Bottle id")
+        if actor is not None:
+            actor = actor.strip()
+            if not actor:
+                raise ValueError("configuration actor cannot be empty")
+            await db.execute(
+                """INSERT INTO configuration_events(bot_id, actor, changed_fields)
+                   VALUES (?, ?, 'created')""", (bottle_cursor.lastrowid, actor),
+            )
         await db.commit()
     except Exception:
         await db.rollback()
         raise
-    if bottle_cursor.lastrowid is None:
-        raise RuntimeError("SQLite did not return a Bottle id")
     return bottle_cursor.lastrowid
 
 
 async def set_sasl_credentials(
-    db: aiosqlite.Connection, *, bottle_id: int, username: str, password: str
+    db: aiosqlite.Connection, *, bottle_id: int, username: str, password: str,
+    actor: str | None = None,
 ) -> None:
-    cursor = await db.execute(
-        """UPDATE irc_profiles SET sasl_username = ?, sasl_password = ?
-           WHERE id = (SELECT irc_profile_id FROM bots WHERE id = ?)""",
-        (username, password, bottle_id),
+    await _update_secret(
+        db, bottle_id=bottle_id, actor=actor, changed_field="sasl_credentials",
+        query="""UPDATE irc_profiles SET sasl_username = ?, sasl_password = ?
+                 WHERE id = (SELECT irc_profile_id FROM bots WHERE id = ?)""",
+        parameters=(username, password, bottle_id),
     )
-    if cursor.rowcount != 1:
+
+
+async def set_llm_api_key(
+    db: aiosqlite.Connection, *, bottle_id: int, api_key: str | None,
+    actor: str | None = None,
+) -> None:
+    await _update_secret(
+        db, bottle_id=bottle_id, actor=actor, changed_field="api_key",
+        query="""UPDATE llm_profiles SET api_key = ?
+                 WHERE id = (SELECT llm_profile_id FROM bots WHERE id = ?)""",
+        parameters=(api_key, bottle_id),
+    )
+
+
+async def set_server_password(
+    db: aiosqlite.Connection, *, bottle_id: int, password: str | None,
+    actor: str | None = None,
+) -> None:
+    await _update_secret(
+        db, bottle_id=bottle_id, actor=actor, changed_field="server_password",
+        query="""UPDATE irc_profiles SET password = ?
+                 WHERE id = (SELECT irc_profile_id FROM bots WHERE id = ?)""",
+        parameters=(password, bottle_id),
+    )
+
+
+async def _update_secret(
+    db: aiosqlite.Connection, *, bottle_id: int, actor: str | None,
+    changed_field: str, query: str, parameters: tuple[object, ...],
+) -> None:
+    try:
+        cursor = await db.execute(query, parameters)
+        if cursor.rowcount != 1:
+            raise LookupError(f"Bottle {bottle_id} does not exist")
+        if actor is not None:
+            actor = actor.strip()
+            if not actor:
+                raise ValueError("configuration actor cannot be empty")
+            await db.execute(
+                """INSERT INTO configuration_events(bot_id, actor, changed_fields)
+                   VALUES (?, ?, ?)""", (bottle_id, actor, changed_field),
+            )
+        await db.commit()
+    except Exception:
         await db.rollback()
-        raise LookupError(f"Bottle {bottle_id} does not exist")
-    await db.commit()
+        raise
 
 
 async def set_memory_extraction(

@@ -31,7 +31,9 @@ from cellar.config_store import BottleSettings, load_bottle_settings, save_bottl
 from cellar.module_loader import available_modules
 from cellar.module_store import module_states, set_module_enabled
 from cellar.models import LogSearchResult
+from cellar.models import IRCProfile, LLMProfile
 from cellar.storage import (
+    create_bottle,
     open_database,
     search_logs,
     set_bottle_enabled,
@@ -64,6 +66,7 @@ class BottledGhostsApp(App[None]):
     #configuration-scroll { height: 1fr; padding: 0 2; }
     #configuration-scroll Label { margin-top: 1; }
     #save-configuration { margin: 1 0 2 0; width: 26; }
+    #new-configuration { margin: 1 1 2 0; width: 20; }
     """
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -76,6 +79,7 @@ class BottledGhostsApp(App[None]):
         Binding("f4", "toggle_module", "Toggle module"),
         Binding("slash", "focus_log_search", "Search logs", key_display="/"),
         Binding("f5", "save_configuration", "Save configuration"),
+        Binding("f6", "new_configuration", "New Bottle"),
     ]
 
     def __init__(self, database: Path, *, actor: str = "operator") -> None:
@@ -88,6 +92,7 @@ class BottledGhostsApp(App[None]):
         self.selected_bottle_id: int | None = None
         self.selected_module_name: str | None = None
         self.log_results: dict[int, LogSearchResult] = {}
+        self.creating_bottle = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -147,6 +152,7 @@ class BottledGhostsApp(App[None]):
                         yield Label(label)
                         yield Input(id=field_id, type=input_type)
                     yield Checkbox("Use TLS", id="config-tls")
+                    yield Button("New Bottle", id="new-configuration")
                     yield Button("Save audited configuration", id="save-configuration",
                                  variant="primary")
         yield Footer()
@@ -220,6 +226,7 @@ class BottledGhostsApp(App[None]):
         if event.data_table.id == "bottles":
             row_id = int(str(event.row_key.value))
             self.selected_bottle_id = row_id
+            self.creating_bottle = False
             await self.show_logs(row_id)
             await self.refresh_modules()
             await self.refresh_configuration()
@@ -347,6 +354,8 @@ class BottledGhostsApp(App[None]):
             await self.action_search_logs()
         elif event.button.id == "save-configuration":
             await self.action_save_configuration()
+        elif event.button.id == "new-configuration":
+            self.action_new_configuration()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "log-search-query":
@@ -468,7 +477,7 @@ class BottledGhostsApp(App[None]):
         ))
 
     async def refresh_configuration(self) -> None:
-        if self.db is None or self.selected_bottle_id is None:
+        if self.db is None or self.selected_bottle_id is None or self.creating_bottle:
             return
         settings = await load_bottle_settings(self.db, bottle_id=self.selected_bottle_id)
         values = {
@@ -496,30 +505,58 @@ class BottledGhostsApp(App[None]):
             f"Editing Bottle {settings.id}. Passwords and API keys remain unchanged."
         )
 
+    def form_settings(self, bottle_id: int) -> BottleSettings:
+        def value(field_id: str) -> str:
+            return self.query_one(f"#{field_id}", Input).value.strip()
+
+        return BottleSettings(
+            id=bottle_id,
+            name=value("config-name"), soul_prompt_path=value("config-soul"),
+            network=value("config-network"), host=value("config-host"),
+            port=int(value("config-port")),
+            tls=self.query_one("#config-tls", Checkbox).value,
+            nick=value("config-nick"), username=value("config-username"),
+            realname=value("config-realname"),
+            channels=[item.strip() for item in value("config-channels").split(",")
+                      if item.strip()],
+            endpoint=value("config-endpoint"), model=value("config-model"),
+            temperature=float(value("config-temperature")),
+            max_tokens=int(value("config-max-tokens")),
+            max_lines=int(value("config-max-lines")),
+            max_chars=int(value("config-max-chars")),
+            cooldown_seconds=float(value("config-cooldown")),
+        )
+
     async def action_save_configuration(self) -> None:
-        if self.db is None or self.selected_bottle_id is None:
+        if self.db is None or (self.selected_bottle_id is None and not self.creating_bottle):
             self.notify("No Bottle selected", severity="warning")
             return
-        value = lambda field_id: self.query_one(f"#{field_id}", Input).value.strip()
         try:
-            settings = BottleSettings(
-                id=self.selected_bottle_id,
-                name=value("config-name"), soul_prompt_path=value("config-soul"),
-                network=value("config-network"), host=value("config-host"),
-                port=int(value("config-port")),
-                tls=self.query_one("#config-tls", Checkbox).value,
-                nick=value("config-nick"), username=value("config-username"),
-                realname=value("config-realname"),
-                channels=[item.strip() for item in value("config-channels").split(",")
-                          if item.strip()],
-                endpoint=value("config-endpoint"), model=value("config-model"),
-                temperature=float(value("config-temperature")),
-                max_tokens=int(value("config-max-tokens")),
-                max_lines=int(value("config-max-lines")),
-                max_chars=int(value("config-max-chars")),
-                cooldown_seconds=float(value("config-cooldown")),
-            )
-            changed = await save_bottle_settings(self.db, settings=settings, actor=self.actor)
+            settings = self.form_settings(0 if self.creating_bottle else self.selected_bottle_id or 0)
+            if not settings.soul_prompt_path.is_file():
+                raise ValueError(f"soul prompt does not exist: {settings.soul_prompt_path}")
+            if self.creating_bottle:
+                created_id = await create_bottle(
+                    self.db, name=settings.name, soul_prompt_path=settings.soul_prompt_path,
+                    irc=IRCProfile(
+                        network=settings.network, host=settings.host, port=settings.port,
+                        tls=settings.tls, nick=settings.nick, username=settings.username,
+                        realname=settings.realname, channels=settings.channels,
+                    ),
+                    llm=LLMProfile(
+                        endpoint=settings.endpoint, model=settings.model,
+                        temperature=settings.temperature, max_tokens=settings.max_tokens,
+                    ),
+                    max_lines=settings.max_lines, max_chars=settings.max_chars,
+                    cooldown_seconds=settings.cooldown_seconds, actor=self.actor,
+                )
+                self.selected_bottle_id = created_id
+                self.creating_bottle = False
+                changed = True
+            else:
+                changed = await save_bottle_settings(
+                    self.db, settings=settings, actor=self.actor,
+                )
         except ValueError as error:
             self.notify(str(error), severity="error")
             return
@@ -527,6 +564,24 @@ class BottledGhostsApp(App[None]):
                     else "Configuration is unchanged")
         await self.refresh_dashboard()
         await self.refresh_configuration()
+
+    def action_new_configuration(self) -> None:
+        self.creating_bottle = True
+        defaults = {
+            "config-name": "", "config-soul": "", "config-network": "",
+            "config-host": "", "config-port": "6697", "config-nick": "",
+            "config-username": "", "config-realname": "", "config-channels": "",
+            "config-endpoint": "", "config-model": "", "config-temperature": "0.7",
+            "config-max-tokens": "160", "config-max-lines": "2",
+            "config-max-chars": "400", "config-cooldown": "1.0",
+        }
+        for field_id, value in defaults.items():
+            self.query_one(f"#{field_id}", Input).value = value
+        self.query_one("#config-tls", Checkbox).value = True
+        self.query_one("#configuration-title", Static).update(
+            "Creating a Bottle without secrets. Add API keys or SASL credentials separately."
+        )
+        self.query_one("#config-name", Input).focus()
 
 
 def run_tui(database: Path, *, actor: str = "operator") -> None:

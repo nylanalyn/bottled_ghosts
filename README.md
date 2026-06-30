@@ -112,6 +112,19 @@ The Configuration tab edits the selected Bottle's public identity, IRC/LLM
 endpoints, channels, model settings, and enforced output limits. Press `F5` or
 the save button to persist one audited transaction. Passwords and API keys are
 never displayed or overwritten by this form; reconnect to apply changes.
+Press `F6` or the New Bottle button to clear the form and create a Bottle with
+no secrets. Creation is audited; configure API keys, server passwords, or SASL
+credentials separately before running it when the selected services require
+them.
+
+Set or rotate secrets through hidden terminal prompts; secret values are never
+written to audit rows:
+
+```bash
+bottled-ghosts set-api-key 1 --actor aureate
+bottled-ghosts set-server-password 1 --actor aureate
+bottled-ghosts set-sasl 1 --actor aureate
+```
 
 To add or replace SASL credentials on an existing Bottle:
 

@@ -20,10 +20,12 @@ from tui.data import dashboard_bottles, recent_bottle_messages
 @pytest.mark.asyncio
 async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
     database = tmp_path / "dashboard.db"
+    soul_path = tmp_path / "soul.md"
+    soul_path.write_text("Be mossy.", encoding="utf-8")
     db = await open_database(database)
     try:
         bottle_id = await create_bottle(
-            db, name="moss", soul_prompt_path=tmp_path / "soul.md",
+            db, name="moss", soul_prompt_path=soul_path,
             irc=IRCProfile(network="local", host="irc.example", nick="moss",
                            username="moss", realname="Moss", channels=["#test"]),
             llm=LLMProfile(endpoint="http://localhost", model="test"),
@@ -88,6 +90,25 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         app.query_one("#config-model", Input).value = "new-model"
         await app.action_save_configuration()
         await pilot.pause()
+        app.action_new_configuration()
+        new_values = {
+            "config-name": "fern",
+            "config-soul": str(soul_path),
+            "config-network": "local",
+            "config-host": "irc.example",
+            "config-port": "6697",
+            "config-nick": "fern",
+            "config-username": "fern",
+            "config-realname": "Fern",
+            "config-channels": "#test",
+            "config-endpoint": "http://localhost/chat",
+            "config-model": "new-model",
+        }
+        for field_id, value in new_values.items():
+            app.query_one(f"#{field_id}", Input).value = value
+        await app.action_save_configuration()
+        await pilot.pause()
+        assert app.query_one("#bottles", DataTable).row_count == 2
 
     db = await open_database(database)
     try:
@@ -107,9 +128,10 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
             """SELECT l.model FROM llm_profiles l JOIN bots b ON b.llm_profile_id = l.id
                WHERE b.id = ?""", (bottle_id,)
         )).fetchone()
-        configuration_event = await (await db.execute(
-            "SELECT actor, changed_fields FROM configuration_events"
-        )).fetchone()
+        configuration_events = await (await db.execute(
+            "SELECT actor, changed_fields FROM configuration_events ORDER BY id"
+        )).fetchall()
+        bottle_count = await (await db.execute("SELECT COUNT(*) FROM bots")).fetchone()
         assert tuple(candidate) == ("approved",)
         assert [tuple(row) for row in audit] == [
             ("approve", "tui-test"),
@@ -118,7 +140,11 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         assert tuple(memory) == ("Prefers green tea", 0.8)
         assert tuple(bottle_state) == (0, 1, "mossy")
         assert tuple(model) == ("new-model",)
-        assert tuple(configuration_event) == ("tui-test", "model,name")
+        assert [tuple(row) for row in configuration_events] == [
+            ("tui-test", "model,name"),
+            ("tui-test", "created"),
+        ]
+        assert bottle_count[0] == 2
         assert await module_states(db, bottle_id=bottle_id) == {"channel_context": True}
         with pytest.raises(aiosqlite.IntegrityError, match="append-only"):
             await db.execute("DELETE FROM configuration_events")

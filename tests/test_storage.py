@@ -11,7 +11,9 @@ from cellar.storage import (
     recent_messages,
     search_messages,
     search_logs,
+    set_llm_api_key,
     set_sasl_credentials,
+    set_server_password,
 )
 
 
@@ -33,9 +35,21 @@ async def test_migration_configuration_and_logging(tmp_path) -> None:
         assert [(item.id, item.name, item.enabled) for item in summaries] == [(1, "test", True)]
         assert [item.id for item in await load_enabled_bottles(db)] == [bottle_id]
         await set_sasl_credentials(db, bottle_id=bottle_id, username="account", password="secret")
+        await set_llm_api_key(
+            db, bottle_id=bottle_id, api_key="api-secret", actor="test-operator"
+        )
+        await set_server_password(
+            db, bottle_id=bottle_id, password="server-secret", actor="test-operator"
+        )
         bottle = await load_bottle(db, bottle_id)
         assert bottle.irc.sasl_username == "account"
         assert bottle.irc.sasl_password == "secret"
+        assert bottle.irc.password == "server-secret"
+        assert bottle.llm.api_key == "api-secret"
+        events = await (await db.execute(
+            "SELECT changed_fields FROM configuration_events ORDER BY id"
+        )).fetchall()
+        assert [row[0] for row in events] == ["api_key", "server_password"]
 
         message = IRCMessage(network="local", channel="#test", speaker="alice", body="hi", bot_id=1)
         await log_message(db, message)

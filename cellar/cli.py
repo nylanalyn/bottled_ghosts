@@ -25,8 +25,10 @@ from cellar.storage import (
     open_database,
     search_logs,
     set_bottle_enabled,
+    set_llm_api_key,
     set_memory_extraction,
     set_sasl_credentials,
+    set_server_password,
 )
 
 MEMORY_TYPES = ("preference", "project", "relationship", "identity", "temporary_state")
@@ -65,9 +67,22 @@ async def async_main(args: argparse.Namespace) -> None:
             if not password:
                 raise ValueError("SASL password is required")
             await set_sasl_credentials(
-                db, bottle_id=args.bottle_id, username=username, password=password
+                db, bottle_id=args.bottle_id, username=username, password=password,
+                actor=args.actor,
             )
             print(f"Updated SASL credentials for Bottle {args.bottle_id}")
+        elif args.command == "set-api-key":
+            api_key = getpass("LLM API key (empty clears): ").strip() or None
+            await set_llm_api_key(
+                db, bottle_id=args.bottle_id, api_key=api_key, actor=args.actor,
+            )
+            print(f"Updated LLM API key for Bottle {args.bottle_id}")
+        elif args.command == "set-server-password":
+            password = getpass("IRC server password (empty clears): ").strip() or None
+            await set_server_password(
+                db, bottle_id=args.bottle_id, password=password, actor=args.actor,
+            )
+            print(f"Updated IRC server password for Bottle {args.bottle_id}")
         elif args.command == "memory-extraction":
             enabled = args_enabled(args.state)
             await set_memory_extraction(db, bottle_id=args.bottle_id, enabled=enabled)
@@ -164,6 +179,15 @@ def main() -> None:
     commands.add_parser("run-all", help="run all enabled Bottles")
     sasl_parser = commands.add_parser("set-sasl", help="set SASL credentials for a Bottle")
     sasl_parser.add_argument("bottle_id", type=int)
+    sasl_parser.add_argument("--actor", default="operator")
+    api_key_parser = commands.add_parser("set-api-key", help="set or clear an LLM API key")
+    api_key_parser.add_argument("bottle_id", type=int)
+    api_key_parser.add_argument("--actor", default="operator")
+    server_password = commands.add_parser(
+        "set-server-password", help="set or clear an IRC server password"
+    )
+    server_password.add_argument("bottle_id", type=int)
+    server_password.add_argument("--actor", default="operator")
     memory_parser = commands.add_parser(
         "memory-extraction", help="enable or disable sediment extraction"
     )

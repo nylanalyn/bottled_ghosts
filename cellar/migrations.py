@@ -1,0 +1,73 @@
+from collections.abc import Awaitable, Callable
+
+import aiosqlite
+
+Migration = Callable[[aiosqlite.Connection], Awaitable[None]]
+
+
+async def migration_001(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE irc_profiles (
+            id INTEGER PRIMARY KEY,
+            network TEXT NOT NULL,
+            host TEXT NOT NULL,
+            port INTEGER NOT NULL DEFAULT 6697,
+            tls INTEGER NOT NULL DEFAULT 1 CHECK (tls IN (0, 1)),
+            nick TEXT NOT NULL,
+            username TEXT NOT NULL,
+            realname TEXT NOT NULL,
+            channels TEXT NOT NULL,
+            password TEXT
+        );
+        CREATE TABLE llm_profiles (
+            id INTEGER PRIMARY KEY,
+            endpoint TEXT NOT NULL,
+            model TEXT NOT NULL,
+            api_key TEXT,
+            temperature REAL NOT NULL DEFAULT 0.7,
+            max_tokens INTEGER NOT NULL DEFAULT 160
+        );
+        CREATE TABLE bots (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+            soul_prompt_path TEXT NOT NULL,
+            llm_profile_id INTEGER NOT NULL REFERENCES llm_profiles(id),
+            irc_profile_id INTEGER NOT NULL REFERENCES irc_profiles(id),
+            max_lines INTEGER NOT NULL DEFAULT 2 CHECK (max_lines > 0),
+            max_chars INTEGER NOT NULL DEFAULT 400 CHECK (max_chars BETWEEN 1 AND 450),
+            cooldown_seconds REAL NOT NULL DEFAULT 1.0 CHECK (cooldown_seconds >= 0)
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            speaker TEXT NOT NULL,
+            timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            body TEXT NOT NULL,
+            bot_id INTEGER NOT NULL REFERENCES bots(id)
+        );
+        CREATE INDEX messages_context_idx
+            ON messages(bot_id, network, channel, id DESC);
+        """
+    )
+
+
+MIGRATIONS: tuple[Migration, ...] = (migration_001,)
+
+
+async def migrate(db: aiosqlite.Connection) -> None:
+    await db.execute("PRAGMA foreign_keys = ON")
+    await db.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations "
+        "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    row = await (await db.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations")).fetchone()
+    current = int(row[0]) if row else 0
+    for version, migration in enumerate(MIGRATIONS, start=1):
+        if version <= current:
+            continue
+        await migration(db)
+        await db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+        await db.commit()

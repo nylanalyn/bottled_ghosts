@@ -1,0 +1,64 @@
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.toml
+config.local.json
+config.local.toml
+secrets.json
+secrets.toml
+credentials.json
+credentials.toml
+*.pem
+*.key
+
+# Canonical runtime database and SQLite sidecar files
+spirits.db
+spirits.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Runtime output
+*.log
+logs/
+run/
+tmp/
+
+# Python environments and bytecode
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test, type-checker, and linter caches
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

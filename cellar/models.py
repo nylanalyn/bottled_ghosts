@@ -1,0 +1,42 @@
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+
+
+class IRCProfile(BaseModel):
+    network: str
+    host: str
+    port: int = 6697
+    tls: bool = True
+    nick: str
+    username: str
+    realname: str
+    channels: list[str]
+    password: str | None = None
+
+
+class LLMProfile(BaseModel):
+    endpoint: str
+    model: str
+    api_key: str | None = None
+    temperature: float = 0.7
+    max_tokens: int = 160
+
+
+class Bottle(BaseModel):
+    id: int
+    name: str
+    soul_prompt_path: Path
+    irc: IRCProfile
+    llm: LLMProfile
+    max_lines: int = Field(default=2, ge=1)
+    max_chars: int = Field(default=400, ge=1, le=450)
+    cooldown_seconds: float = Field(default=1.0, ge=0)
+
+
+class IRCMessage(BaseModel):
+    network: str
+    channel: str
+    speaker: str
+    body: str
+    bot_id: int

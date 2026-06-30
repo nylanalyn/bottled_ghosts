@@ -3,6 +3,7 @@ from textual.widgets import DataTable, Input, Select
 
 from cellar.identity import resolve_user
 from cellar.memory_store import list_memory_candidates, store_memory_candidates
+from cellar.module_store import module_states
 from cellar.models import (
     ExtractedMemory,
     IRCMessage,
@@ -71,6 +72,12 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         app.query_one("#memory-confidence", Input).value = "0.8"
         await app.action_save_memory()
         await pilot.pause()
+        app.selected_bottle_id = bottle_id
+        app.selected_module_name = "channel_context"
+        await app.action_toggle_extraction()
+        await app.action_toggle_module()
+        await app.action_toggle_bottle()
+        await pilot.pause()
 
     db = await open_database(database)
     try:
@@ -83,11 +90,16 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         memory = await (await db.execute(
             "SELECT memory_text, confidence FROM user_memories"
         )).fetchone()
+        bottle_state = await (await db.execute(
+            "SELECT enabled, extract_memories FROM bots WHERE id = ?", (bottle_id,)
+        )).fetchone()
         assert tuple(candidate) == ("approved",)
         assert [tuple(row) for row in audit] == [
             ("approve", "tui-test"),
             ("edit", "tui-test"),
         ]
         assert tuple(memory) == ("Prefers green tea", 0.8)
+        assert tuple(bottle_state) == (0, 1)
+        assert await module_states(db, bottle_id=bottle_id) == {"channel_context": True}
     finally:
         await db.close()

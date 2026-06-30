@@ -24,6 +24,7 @@ from cellar.storage import (
     load_enabled_bottles,
     open_database,
     search_logs,
+    set_bottle_enabled,
     set_memory_extraction,
     set_sasl_credentials,
 )
@@ -72,6 +73,10 @@ async def async_main(args: argparse.Namespace) -> None:
             await set_memory_extraction(db, bottle_id=args.bottle_id, enabled=enabled)
             print(f"Memory extraction {'enabled' if enabled else 'disabled'} "
                   f"for Bottle {args.bottle_id}")
+        elif args.command == "bottle-toggle":
+            enabled = args_enabled(args.state)
+            await set_bottle_enabled(db, bottle_id=args.bottle_id, enabled=enabled)
+            print(f"Bottle {args.bottle_id} {'enabled' if enabled else 'disabled'}")
         elif args.command == "sediment-list":
             for candidate in await list_memory_candidates(db, status=args.status):
                 print(f"{candidate.id}\t{candidate.status}\t{candidate.memory_type}\t"
@@ -164,6 +169,11 @@ def main() -> None:
     )
     memory_parser.add_argument("bottle_id", type=int)
     memory_parser.add_argument("state", choices=("on", "off"))
+    bottle_toggle = commands.add_parser(
+        "bottle-toggle", help="include or exclude a Bottle from run-all"
+    )
+    bottle_toggle.add_argument("bottle_id", type=int)
+    bottle_toggle.add_argument("state", choices=("on", "off"))
     sediment_list = commands.add_parser("sediment-list", help="list memory candidates")
     sediment_list.add_argument("--status", choices=("pending", "approved", "rejected"),
                                default="pending")

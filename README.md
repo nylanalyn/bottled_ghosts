@@ -101,6 +101,10 @@ candidate or `x` to reject it; both actions use the supplied audit identity.
 The Memories tab lists trusted memories and their source. Edit the selected
 memory's text, type, or confidence and press the save button or `Ctrl+S`; the
 change is written transactionally with the same audit identity.
+The Modules tab exposes configuration for the Bottle selected on the dashboard:
+`F2` toggles inclusion in `run-all`, `F3` toggles sediment extraction, and `F4`
+toggles the selected registered module. Running processes are not started or
+stopped implicitly; reconnect a Bottle to apply module changes.
 
 To add or replace SASL credentials on an existing Bottle:
 

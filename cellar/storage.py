@@ -142,6 +142,18 @@ async def set_memory_extraction(
     await db.commit()
 
 
+async def set_bottle_enabled(
+    db: aiosqlite.Connection, *, bottle_id: int, enabled: bool
+) -> None:
+    cursor = await db.execute(
+        "UPDATE bots SET enabled = ? WHERE id = ?", (enabled, bottle_id)
+    )
+    if cursor.rowcount != 1:
+        await db.rollback()
+        raise LookupError(f"Bottle {bottle_id} does not exist")
+    await db.commit()
+
+
 async def log_message(db: aiosqlite.Connection, message: IRCMessage) -> int:
     cursor = await db.execute(
         """INSERT INTO messages(network, channel, speaker, body, bot_id, user_id)

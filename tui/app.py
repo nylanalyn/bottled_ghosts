@@ -24,7 +24,9 @@ from cellar.memory_store import (
     list_memory_candidates,
     reject_memory_candidate,
 )
-from cellar.storage import open_database
+from cellar.module_loader import available_modules
+from cellar.module_store import module_states, set_module_enabled
+from cellar.storage import open_database, set_bottle_enabled, set_memory_extraction
 from tui.data import dashboard_bottles, recent_bottle_messages
 
 
@@ -42,6 +44,8 @@ class BottledGhostsApp(App[None]):
     #memory-detail { height: 5; border: solid $secondary; padding: 1 2; }
     .memory-field { margin: 0 1; }
     #save-memory { margin: 1; width: 20; }
+    #module-title { height: 2; padding: 0 1; background: $panel; }
+    #module-list { height: 1fr; border: solid $accent; }
     """
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -49,6 +53,9 @@ class BottledGhostsApp(App[None]):
         Binding("a", "approve_candidate", "Approve"),
         Binding("x", "reject_candidate", "Reject"),
         Binding("ctrl+s", "save_memory", "Save memory"),
+        Binding("f2", "toggle_bottle", "Toggle Bottle"),
+        Binding("f3", "toggle_extraction", "Toggle extraction"),
+        Binding("f4", "toggle_module", "Toggle module"),
     ]
 
     def __init__(self, database: Path, *, actor: str = "operator") -> None:
@@ -58,6 +65,8 @@ class BottledGhostsApp(App[None]):
         self.db: aiosqlite.Connection | None = None
         self.selected_candidate_id: int | None = None
         self.selected_memory_id: int | None = None
+        self.selected_bottle_id: int | None = None
+        self.selected_module_name: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -83,6 +92,9 @@ class BottledGhostsApp(App[None]):
                 yield Input(placeholder="Confidence (0–1)", type="number",
                             id="memory-confidence", classes="memory-field")
                 yield Button("Save audited edit", id="save-memory", variant="primary")
+            with TabPane("Modules", id="modules-tab"):
+                yield Static("Select a Bottle on the Bottles tab.", id="module-title")
+                yield DataTable(id="module-list")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -102,6 +114,10 @@ class BottledGhostsApp(App[None]):
         memory_table.cursor_type = "row"
         memory_table.zebra_stripes = True
         memory_table.add_columns("ID", "User", "Type", "Confidence", "Memory")
+        module_table = self.query_one("#module-list", DataTable)
+        module_table.cursor_type = "row"
+        module_table.zebra_stripes = True
+        module_table.add_columns("Module", "State")
         await self.refresh_all()
         bottle_table.focus()
 
@@ -117,6 +133,7 @@ class BottledGhostsApp(App[None]):
         await self.refresh_dashboard()
         await self.refresh_sediment()
         await self.refresh_memories()
+        await self.refresh_modules()
 
     async def refresh_dashboard(self) -> None:
         if self.db is None:
@@ -132,21 +149,30 @@ class BottledGhostsApp(App[None]):
                 bottle.enabled_modules or "—", bottle.last_activity or "—",
                 key=str(bottle.id),
             )
-        if bottles:
-            await self.show_logs(bottles[0].id)
+        bottle_ids = {bottle.id for bottle in bottles}
+        if self.selected_bottle_id not in bottle_ids:
+            self.selected_bottle_id = bottles[0].id if bottles else None
+        if self.selected_bottle_id is not None:
+            await self.show_logs(self.selected_bottle_id)
         else:
             self.query_one("#logs", RichLog).write("No Bottles configured.")
 
     async def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        row_id = int(str(event.row_key.value))
         if event.data_table.id == "bottles":
+            row_id = int(str(event.row_key.value))
+            self.selected_bottle_id = row_id
             await self.show_logs(row_id)
+            await self.refresh_modules()
         elif event.data_table.id == "sediment":
+            row_id = int(str(event.row_key.value))
             self.selected_candidate_id = row_id
             await self.show_candidate(row_id)
         elif event.data_table.id == "memories":
+            row_id = int(str(event.row_key.value))
             self.selected_memory_id = row_id
             await self.show_memory(row_id)
+        elif event.data_table.id == "module-list":
+            self.selected_module_name = str(event.row_key.value)
 
     async def show_logs(self, bottle_id: int) -> None:
         if self.db is None:
@@ -274,6 +300,64 @@ class BottledGhostsApp(App[None]):
             return
         self.notify(f"Updated memory {self.selected_memory_id}")
         await self.refresh_memories()
+
+    async def refresh_modules(self) -> None:
+        table = self.query_one("#module-list", DataTable)
+        table.clear()
+        if self.db is None or self.selected_bottle_id is None:
+            self.query_one("#module-title", Static).update("No Bottle selected.")
+            self.selected_module_name = None
+            return
+        states = await module_states(self.db, bottle_id=self.selected_bottle_id)
+        for name in available_modules():
+            table.add_row(name, "enabled" if states.get(name, False) else "disabled", key=name)
+        self.selected_module_name = available_modules()[0] if available_modules() else None
+        self.query_one("#module-title", Static).update(
+            f"Bottle {self.selected_bottle_id} configuration — F2 Bottle, "
+            "F3 extraction, F4 selected module"
+        )
+
+    async def action_toggle_bottle(self) -> None:
+        if self.db is None or self.selected_bottle_id is None:
+            self.notify("No Bottle selected", severity="warning")
+            return
+        bottles = await dashboard_bottles(self.db)
+        bottle = next(item for item in bottles if item.id == self.selected_bottle_id)
+        await set_bottle_enabled(
+            self.db, bottle_id=bottle.id, enabled=not bottle.enabled,
+        )
+        self.notify(f"Bottle {bottle.id} {'disabled' if bottle.enabled else 'enabled'}")
+        await self.refresh_dashboard()
+
+    async def action_toggle_extraction(self) -> None:
+        if self.db is None or self.selected_bottle_id is None:
+            self.notify("No Bottle selected", severity="warning")
+            return
+        bottles = await dashboard_bottles(self.db)
+        bottle = next(item for item in bottles if item.id == self.selected_bottle_id)
+        await set_memory_extraction(
+            self.db, bottle_id=bottle.id, enabled=not bottle.extract_memories,
+        )
+        self.notify(
+            f"Memory extraction {'disabled' if bottle.extract_memories else 'enabled'} "
+            f"for Bottle {bottle.id}"
+        )
+        await self.refresh_dashboard()
+
+    async def action_toggle_module(self) -> None:
+        if self.db is None or self.selected_bottle_id is None or self.selected_module_name is None:
+            self.notify("No module selected", severity="warning")
+            return
+        states = await module_states(self.db, bottle_id=self.selected_bottle_id)
+        enabled = not states.get(self.selected_module_name, False)
+        await set_module_enabled(
+            self.db, bottle_id=self.selected_bottle_id,
+            module_name=self.selected_module_name, enabled=enabled,
+        )
+        self.notify(f"{self.selected_module_name} {'enabled' if enabled else 'disabled'}; "
+                    "reconnect to apply")
+        await self.refresh_modules()
+        await self.refresh_dashboard()
 
 
 def run_tui(database: Path, *, actor: str = "operator") -> None:

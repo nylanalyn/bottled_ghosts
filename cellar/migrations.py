@@ -54,7 +54,16 @@ async def migration_001(db: aiosqlite.Connection) -> None:
     )
 
 
-MIGRATIONS: tuple[Migration, ...] = (migration_001,)
+async def migration_002(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        ALTER TABLE irc_profiles ADD COLUMN sasl_username TEXT;
+        ALTER TABLE irc_profiles ADD COLUMN sasl_password TEXT;
+        """
+    )
+
+
+MIGRATIONS: tuple[Migration, ...] = (migration_001, migration_002)
 
 
 async def migrate(db: aiosqlite.Connection) -> None:

@@ -1,10 +1,13 @@
 import asyncio
+import base64
+import logging
 import ssl
 from collections.abc import Awaitable, Callable
 
 from cellar.models import IRCProfile
 
 MessageHandler = Callable[[str, str, str], Awaitable[None]]
+logger = logging.getLogger(__name__)
 
 
 def parse_privmsg(line: str) -> tuple[str, str, str] | None:
@@ -18,11 +21,20 @@ def parse_privmsg(line: str) -> tuple[str, str, str] | None:
     return prefix.split("!", 1)[0], parts[1], body
 
 
+def sasl_plain_chunks(username: str, password: str) -> list[str]:
+    payload = base64.b64encode(f"{username}\0{username}\0{password}".encode()).decode()
+    chunks = [payload[start:start + 400] for start in range(0, len(payload), 400)]
+    if len(payload) % 400 == 0:
+        chunks.append("+")
+    return chunks
+
+
 class IRCClient:
     def __init__(self, profile: IRCProfile, handler: MessageHandler) -> None:
         self.profile = profile
         self.handler = handler
         self.writer: asyncio.StreamWriter | None = None
+        self.capabilities: set[str] = set()
 
     async def send_raw(self, line: str) -> None:
         if self.writer is None:
@@ -33,22 +45,73 @@ class IRCClient:
     async def send_message(self, target: str, body: str) -> None:
         await self.send_raw(f"PRIVMSG {target} :{body}")
 
+    async def authenticate_sasl_plain(self) -> None:
+        username = self.profile.sasl_username
+        password = self.profile.sasl_password
+        if username is None or password is None:
+            raise RuntimeError("SASL credentials are incomplete")
+        for chunk in sasl_plain_chunks(username, password):
+            await self.send_raw(f"AUTHENTICATE {chunk}")
+
     async def run(self) -> None:
         context = ssl.create_default_context() if self.profile.tls else None
         reader, self.writer = await asyncio.open_connection(
             self.profile.host, self.profile.port, ssl=context
         )
+        logger.info("connected to %s:%d (TLS: %s)", self.profile.host, self.profile.port,
+                    self.profile.tls)
+        await self.send_raw("CAP LS 302")
         if self.profile.password:
             await self.send_raw(f"PASS {self.profile.password}")
         await self.send_raw(f"NICK {self.profile.nick}")
         await self.send_raw(f"USER {self.profile.username} 0 * :{self.profile.realname}")
-        for channel in self.profile.channels:
-            await self.send_raw(f"JOIN {channel}")
         while raw := await reader.readline():
             line = raw.decode(errors="replace").rstrip("\r\n")
             if line.startswith("PING "):
                 await self.send_raw(f"PONG {line[5:]}")
                 continue
+            if " CAP " in line and " LS " in line:
+                self.capabilities.update(
+                    item.split("=", 1)[0] for item in line.rsplit(" :", 1)[-1].split()
+                )
+                if " LS * :" in line:
+                    continue
+                if self.profile.sasl_username:
+                    if "sasl" not in self.capabilities:
+                        raise RuntimeError("IRC server does not advertise SASL")
+                    logger.info("requesting SASL PLAIN authentication")
+                    await self.send_raw("CAP REQ :sasl")
+                else:
+                    await self.send_raw("CAP END")
+                continue
+            if " CAP " in line and " NAK " in line and "sasl" in line.rsplit(" :", 1)[-1].split():
+                raise RuntimeError("IRC server rejected the SASL capability request")
+            if " CAP " in line and " ACK " in line and "sasl" in line.rsplit(" :", 1)[-1].split():
+                await self.send_raw("AUTHENTICATE PLAIN")
+                continue
+            if line == "AUTHENTICATE +":
+                await self.authenticate_sasl_plain()
+                continue
+            parts = line.split()
+            numeric = parts[1] if len(parts) > 1 and parts[1].isdigit() else None
+            if numeric == "903":
+                logger.info("SASL authentication succeeded")
+                await self.send_raw("CAP END")
+                continue
+            if numeric in {"904", "905", "906", "907"}:
+                raise RuntimeError(f"SASL authentication failed (IRC {numeric})")
+            if numeric == "001":
+                logger.info("IRC registration complete as %s", self.profile.nick)
+                for channel in self.profile.channels:
+                    await self.send_raw(f"JOIN {channel}")
+                    logger.info("joining %s", channel)
+                continue
+            if line.startswith("ERROR "):
+                raise ConnectionError(line)
             parsed = parse_privmsg(line)
             if parsed:
-                await self.handler(*parsed)
+                try:
+                    await self.handler(*parsed)
+                except Exception:
+                    logger.exception("failed to handle message from %s in %s", parsed[0], parsed[1])
+        raise ConnectionError("IRC server closed the connection")

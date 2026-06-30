@@ -1,31 +1,34 @@
-import json
-
 import pytest
 
-from cellar.models import IRCMessage
-from cellar.storage import load_bottle, log_message, open_database, recent_messages
+from cellar.models import IRCMessage, IRCProfile, LLMProfile
+from cellar.storage import (
+    create_bottle,
+    load_bottle,
+    log_message,
+    open_database,
+    recent_messages,
+    set_sasl_credentials,
+)
 
 
 @pytest.mark.asyncio
 async def test_migration_configuration_and_logging(tmp_path) -> None:
     db = await open_database(tmp_path / "test.db")
     try:
-        await db.execute(
-            "INSERT INTO irc_profiles(network, host, nick, username, realname, channels) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("local", "irc.example", "ghost", "ghost", "Ghost", json.dumps(["#test"])),
+        bottle_id = await create_bottle(
+            db,
+            name="test",
+            soul_prompt_path=tmp_path / "soul.md",
+            irc=IRCProfile(network="local", host="irc.example", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#test"]),
+            llm=LLMProfile(endpoint="http://localhost/chat", model="test-model"),
         )
-        await db.execute(
-            "INSERT INTO llm_profiles(endpoint, model) VALUES (?, ?)",
-            ("http://localhost/chat", "test-model"),
-        )
-        await db.execute(
-            "INSERT INTO bots(name, soul_prompt_path, llm_profile_id, irc_profile_id) "
-            "VALUES (?, ?, 1, 1)", ("test", "soul.md"),
-        )
-        await db.commit()
-        bottle = await load_bottle(db, 1)
+        bottle = await load_bottle(db, bottle_id)
         assert bottle.irc.channels == ["#test"]
+        await set_sasl_credentials(db, bottle_id=bottle_id, username="account", password="secret")
+        bottle = await load_bottle(db, bottle_id)
+        assert bottle.irc.sasl_username == "account"
+        assert bottle.irc.sasl_password == "secret"
 
         message = IRCMessage(network="local", channel="#test", speaker="alice", body="hi", bot_id=1)
         await log_message(db, message)

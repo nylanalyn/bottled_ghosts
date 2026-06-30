@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class IRCProfile(BaseModel):
@@ -13,6 +13,14 @@ class IRCProfile(BaseModel):
     realname: str
     channels: list[str]
     password: str | None = None
+    sasl_username: str | None = None
+    sasl_password: str | None = None
+
+    @model_validator(mode="after")
+    def validate_sasl_credentials(self) -> "IRCProfile":
+        if bool(self.sasl_username) != bool(self.sasl_password):
+            raise ValueError("SASL username and password must be provided together")
+        return self
 
 
 class LLMProfile(BaseModel):

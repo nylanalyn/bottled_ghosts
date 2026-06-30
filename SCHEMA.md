@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 001.
+The schema below reflects migration 002.
 
 ## schema_migrations
 
@@ -8,7 +8,7 @@ Records applied schema versions. Columns: `version INTEGER PRIMARY KEY`, `applie
 
 ## irc_profiles
 
-Stores IRC connection configuration. Columns: `id INTEGER PRIMARY KEY`, `network TEXT NOT NULL`, `host TEXT NOT NULL`, `port INTEGER NOT NULL`, `tls INTEGER NOT NULL`, `nick TEXT NOT NULL`, `username TEXT NOT NULL`, `realname TEXT NOT NULL`, `channels TEXT NOT NULL`, `password TEXT`.
+Stores IRC connection configuration. Columns: `id INTEGER PRIMARY KEY`, `network TEXT NOT NULL`, `host TEXT NOT NULL`, `port INTEGER NOT NULL`, `tls INTEGER NOT NULL`, `nick TEXT NOT NULL`, `username TEXT NOT NULL`, `realname TEXT NOT NULL`, `channels TEXT NOT NULL`, `password TEXT`, `sasl_username TEXT`, `sasl_password TEXT`.
 
 `channels` is a JSON-encoded list inside SQLite; SQLite remains canonical.
 
@@ -31,3 +31,4 @@ Foreign key: `bot_id` references `bots(id)`. Index: `messages_context_idx(bot_id
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
+- 002: Add optional IRC SASL username and password fields.

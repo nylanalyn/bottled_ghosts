@@ -1,4 +1,7 @@
+import asyncio
 import json
+import logging
+from functools import partial
 from pathlib import Path
 from typing import Literal, cast
 
@@ -41,14 +44,18 @@ from cellar.module_store import (
 )
 from cellar.models import LogSearchResult
 from cellar.models import IRCProfile, LLMProfile
+from cellar.runtime import run_bottle_from_database
 from cellar.storage import (
     create_bottle,
+    load_bottle,
     open_database,
     search_logs,
     set_bottle_enabled,
     set_memory_extraction,
 )
 from tui.data import DashboardAuditEvent, dashboard_audit_events, dashboard_bottles, recent_bottle_messages
+
+logger = logging.getLogger(__name__)
 
 
 class BottledGhostsApp(App[None]):
@@ -93,6 +100,7 @@ class BottledGhostsApp(App[None]):
         Binding("slash", "focus_log_search", "Search logs", key_display="/"),
         Binding("f5", "save_configuration", "Save configuration"),
         Binding("f6", "new_configuration", "New Bottle"),
+        Binding("f7", "toggle_runtime", "Start/stop Bottle"),
     ]
 
     def __init__(self, database: Path, *, actor: str = "operator") -> None:
@@ -107,6 +115,8 @@ class BottledGhostsApp(App[None]):
         self.log_results: dict[int, LogSearchResult] = {}
         self.creating_bottle = False
         self.audit_events: dict[str, DashboardAuditEvent] = {}
+        self.running_bottles: dict[int, asyncio.Task[None]] = {}
+        self._module_refresh_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -187,7 +197,7 @@ class BottledGhostsApp(App[None]):
         bottle_table.cursor_type = "row"
         bottle_table.zebra_stripes = True
         bottle_table.add_columns(
-            "ID", "State", "Bottle", "IRC identity", "Channels",
+            "ID", "Enabled", "Runtime", "Bottle", "IRC identity", "Channels",
             "Memory", "Sediment", "Modules", "Last activity",
         )
         sediment_table = self.query_one("#sediment", DataTable)
@@ -214,6 +224,12 @@ class BottledGhostsApp(App[None]):
         bottle_table.focus()
 
     async def on_unmount(self) -> None:
+        tasks = tuple(self.running_bottles.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.running_bottles.clear()
         if self.db is not None:
             await self.db.close()
             self.db = None
@@ -237,7 +253,8 @@ class BottledGhostsApp(App[None]):
         bottles = await dashboard_bottles(self.db)
         for bottle in bottles:
             table.add_row(
-                str(bottle.id), "enabled" if bottle.enabled else "disabled", bottle.name,
+                str(bottle.id), "yes" if bottle.enabled else "no",
+                "running" if bottle.id in self.running_bottles else "stopped", bottle.name,
                 f"{bottle.nick}@{bottle.network}", ",".join(bottle.channels),
                 "on" if bottle.extract_memories else "off", str(bottle.pending_candidates),
                 bottle.enabled_modules or "—", bottle.last_activity or "—",
@@ -419,6 +436,10 @@ class BottledGhostsApp(App[None]):
         await self.refresh_audit()
 
     async def refresh_modules(self) -> None:
+        async with self._module_refresh_lock:
+            await self._refresh_modules()
+
+    async def _refresh_modules(self) -> None:
         table = self.query_one("#module-list", DataTable)
         table.clear()
         if self.db is None or self.selected_bottle_id is None:
@@ -480,6 +501,43 @@ class BottledGhostsApp(App[None]):
                     "reconnect to apply")
         await self.refresh_modules()
         await self.refresh_dashboard()
+
+    async def action_toggle_runtime(self) -> None:
+        if self.db is None or self.selected_bottle_id is None:
+            self.notify("No Bottle selected", severity="warning")
+            return
+        bottle_id = self.selected_bottle_id
+        running = self.running_bottles.get(bottle_id)
+        if running is not None:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+            self.running_bottles.pop(bottle_id, None)
+            self.notify(f"Stopped Bottle {bottle_id}")
+            await self.refresh_dashboard()
+            return
+        try:
+            bottle = await load_bottle(self.db, bottle_id)
+        except LookupError:
+            self.notify("Enable the Bottle before starting it", severity="warning")
+            return
+        task = asyncio.create_task(
+            run_bottle_from_database(self.database, bottle), name=f"tui-bottle-{bottle_id}"
+        )
+        self.running_bottles[bottle_id] = task
+        task.add_done_callback(partial(self._runtime_done, bottle_id))
+        self.notify(f"Started Bottle {bottle_id}")
+        await self.refresh_dashboard()
+
+    def _runtime_done(self, bottle_id: int, task: asyncio.Task[None]) -> None:
+        if self.running_bottles.get(bottle_id) is not task:
+            return
+        self.running_bottles.pop(bottle_id, None)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error("TUI Bottle %d stopped unexpectedly", bottle_id, exc_info=error)
+            self.notify(f"Bottle {bottle_id} stopped: {error}", severity="error")
 
     async def show_module_settings(self) -> None:
         if self.db is None or self.selected_bottle_id is None or self.selected_module_name is None:

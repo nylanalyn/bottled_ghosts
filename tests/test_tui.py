@@ -1,3 +1,5 @@
+import asyncio
+
 import aiosqlite
 import pytest
 from textual.widgets import Checkbox, DataTable, Input, Select
@@ -18,7 +20,7 @@ from tui.data import dashboard_bottles, recent_bottle_messages
 
 
 @pytest.mark.asyncio
-async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
+async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_path) -> None:
     database = tmp_path / "dashboard.db"
     soul_path = tmp_path / "soul.md"
     soul_path.write_text("Be mossy.", encoding="utf-8")
@@ -60,6 +62,13 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
     finally:
         await db.close()
 
+    runtime_started = asyncio.Event()
+
+    async def fake_run_bottle(_database, _bottle) -> None:
+        runtime_started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr("tui.app.run_bottle_from_database", fake_run_bottle)
     app = BottledGhostsApp(database, actor="tui-test")
     async with app.run_test(size=(120, 35)) as pilot:
         await pilot.pause()
@@ -77,6 +86,11 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         await pilot.pause()
         app.selected_bottle_id = bottle_id
         app.selected_module_name = "channel_context"
+        await app.action_toggle_runtime()
+        await runtime_started.wait()
+        assert bottle_id in app.running_bottles
+        await app.action_toggle_runtime()
+        assert bottle_id not in app.running_bottles
         await app.action_toggle_extraction()
         await app.action_toggle_module()
         app.query_one("#module-settings", Input).value = '{"label":"quiet room"}'

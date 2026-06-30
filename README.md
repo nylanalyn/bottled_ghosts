@@ -94,7 +94,8 @@ bottled-ghosts tui --actor aureate
 
 The dashboard shows configured Bottles, memory extraction state, pending
 sediment, enabled modules, last activity, and recent messages. Use the arrow
-keys to select a Bottle, `r` to refresh, and `q` to quit.
+keys to select a Bottle, `F7` to explicitly start or stop it, `r` to refresh,
+and `q` to quit. Closing the TUI stops Bottles launched by that TUI.
 The Sediment tab shows candidate provenance. Press `a` to approve the selected
 candidate or `x` to reject it; both actions use the supplied audit identity.
 The Memories tab lists trusted memories and their source. Edit the selected

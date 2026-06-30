@@ -115,7 +115,7 @@ Dream output can be stored as memory.
 4. LLM Client
 5. Memory Engine
 6. Module Manager
-7. Scheduler
+7. Explicit Dream Job Runner
 8. TUI
 9. SQLite Storage
 
@@ -545,6 +545,10 @@ Actions:
 * edit bottle
 * start/stop bottle
 * inspect logs
+
+Starting and stopping a Bottle is always an explicit operator action. Closing the
+TUI stops any Bottle tasks launched by that TUI. Configuration changes never
+implicitly restart a running Bottle.
 
 ## Bottle Screen
 

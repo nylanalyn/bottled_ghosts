@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import aiosqlite
@@ -12,7 +13,7 @@ from cellar.storage import log_message, recent_messages
 logger = logging.getLogger(__name__)
 
 
-async def run_bottle(db: aiosqlite.Connection, bottle: Bottle) -> None:
+async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
     soul = read_soul(bottle.soul_prompt_path)
     cooldown = Cooldown(bottle.cooldown_seconds)
     client: IRCClient
@@ -42,3 +43,27 @@ async def run_bottle(db: aiosqlite.Connection, bottle: Bottle) -> None:
 
     client = IRCClient(bottle.irc, on_message)
     await client.run()
+
+
+async def run_bottle(db: aiosqlite.Connection, bottle: Bottle) -> None:
+    delay = 1.0
+    while True:
+        try:
+            await run_bottle_once(db, bottle)
+        except asyncio.CancelledError:
+            logger.info("stopping Bottle %d (%s)", bottle.id, bottle.name)
+            raise
+        except Exception:
+            logger.exception("Bottle %d (%s) disconnected; retrying in %.0fs",
+                             bottle.id, bottle.name, delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60.0)
+
+
+async def run_bottles(db: aiosqlite.Connection, bottles: list[Bottle]) -> None:
+    if not bottles:
+        raise ValueError("no enabled Bottles are configured")
+    logger.info("starting %d Bottle(s)", len(bottles))
+    async with asyncio.TaskGroup() as tasks:
+        for bottle in bottles:
+            tasks.create_task(run_bottle(db, bottle), name=f"bottle-{bottle.id}")

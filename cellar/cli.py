@@ -5,8 +5,15 @@ from getpass import getpass
 from pathlib import Path
 
 from cellar.configure import ask, collect_configuration
-from cellar.runtime import run_bottle
-from cellar.storage import create_bottle, load_bottle, open_database, set_sasl_credentials
+from cellar.runtime import run_bottle, run_bottles
+from cellar.storage import (
+    create_bottle,
+    list_bottles,
+    load_bottle,
+    load_enabled_bottles,
+    open_database,
+    set_sasl_credentials,
+)
 
 
 async def async_main(database: Path, command: str, bottle_id: int | None = None) -> None:
@@ -16,6 +23,16 @@ async def async_main(database: Path, command: str, bottle_id: int | None = None)
             if bottle_id is None:
                 raise SystemExit("a Bottle id is required")
             await run_bottle(db, await load_bottle(db, bottle_id))
+        elif command == "run-all":
+            await run_bottles(db, await load_enabled_bottles(db))
+        elif command == "list":
+            bottles = await list_bottles(db)
+            if not bottles:
+                print("No Bottles configured.")
+            for bottle in bottles:
+                state = "enabled" if bottle.enabled else "disabled"
+                channels = ",".join(bottle.channels)
+                print(f"{bottle.id}\t{state}\t{bottle.name}\t{bottle.nick}@{bottle.network}\t{channels}")
         elif command == "configure":
             name, soul, irc, llm, max_lines, max_chars, cooldown = collect_configuration()
             created_id = await create_bottle(
@@ -42,6 +59,8 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("migrate", help="apply pending database migrations")
     commands.add_parser("configure", help="interactively create a Bottle")
+    commands.add_parser("list", help="list configured Bottles")
+    commands.add_parser("run-all", help="run all enabled Bottles")
     sasl_parser = commands.add_parser("set-sasl", help="set SASL credentials for a Bottle")
     sasl_parser.add_argument("bottle_id", type=int)
     run_parser = commands.add_parser("run", help="run one configured Bottle")

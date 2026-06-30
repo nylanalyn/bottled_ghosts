@@ -4,7 +4,7 @@ from pathlib import Path
 import aiosqlite
 
 from cellar.migrations import migrate
-from cellar.models import Bottle, IRCMessage, IRCProfile, LLMProfile
+from cellar.models import Bottle, BottleSummary, IRCMessage, IRCProfile, LLMProfile
 
 
 async def open_database(path: Path) -> aiosqlite.Connection:
@@ -40,6 +40,26 @@ async def load_bottle(db: aiosqlite.Connection, bottle_id: int) -> Bottle:
         llm=LLMProfile(endpoint=row["endpoint"], model=row["model"],
             api_key=row["api_key"], temperature=row["temperature"], max_tokens=row["max_tokens"]),
     )
+
+
+async def list_bottles(db: aiosqlite.Connection) -> list[BottleSummary]:
+    cursor = await db.execute(
+        """SELECT b.id, b.name, b.enabled, i.network, i.nick, i.channels
+           FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
+           ORDER BY b.id"""
+    )
+    rows = await cursor.fetchall()
+    return [
+        BottleSummary(id=row["id"], name=row["name"], enabled=bool(row["enabled"]),
+                      network=row["network"], nick=row["nick"],
+                      channels=json.loads(row["channels"]))
+        for row in rows
+    ]
+
+
+async def load_enabled_bottles(db: aiosqlite.Connection) -> list[Bottle]:
+    summaries = await list_bottles(db)
+    return [await load_bottle(db, summary.id) for summary in summaries if summary.enabled]
 
 
 async def create_bottle(

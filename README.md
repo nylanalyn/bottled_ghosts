@@ -18,8 +18,18 @@ Create a Markdown soul prompt, then configure and run a Bottle:
 ```bash
 bottled-ghosts migrate
 bottled-ghosts configure
+bottled-ghosts list
 bottled-ghosts run 1
 ```
+
+Run every enabled Bottle concurrently with:
+
+```bash
+bottled-ghosts run-all
+```
+
+Each Bottle reconnects independently with exponential backoff capped at 60
+seconds. Ctrl-C cancels all Bottle tasks and closes their IRC connections.
 
 To add or replace SASL credentials on an existing Bottle:
 

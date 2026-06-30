@@ -48,3 +48,12 @@ class IRCMessage(BaseModel):
     speaker: str
     body: str
     bot_id: int
+
+
+class BottleSummary(BaseModel):
+    id: int
+    name: str
+    enabled: bool
+    network: str
+    nick: str
+    channels: list[str]

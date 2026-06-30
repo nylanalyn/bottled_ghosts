@@ -114,7 +114,38 @@ async def migration_003(db: aiosqlite.Connection) -> None:
     )
 
 
-MIGRATIONS: tuple[Migration, ...] = (migration_001, migration_002, migration_003)
+async def migration_004(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        ALTER TABLE bots ADD COLUMN extract_memories INTEGER NOT NULL DEFAULT 0
+            CHECK (extract_memories IN (0, 1));
+        CREATE TABLE memory_candidates (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            source_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            candidate_text TEXT NOT NULL,
+            memory_type TEXT NOT NULL CHECK (
+                memory_type IN ('preference', 'project', 'relationship', 'identity', 'temporary_state')
+            ),
+            confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                status IN ('pending', 'approved', 'rejected')
+            ),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at TEXT,
+            UNIQUE(user_id, source_message_id, candidate_text)
+        );
+        CREATE INDEX memory_candidates_review_idx
+            ON memory_candidates(status, created_at, id);
+        CREATE INDEX memory_candidates_user_idx
+            ON memory_candidates(user_id, status, id DESC);
+        """
+    )
+
+
+MIGRATIONS: tuple[Migration, ...] = (
+    migration_001, migration_002, migration_003, migration_004,
+)
 
 
 async def migrate(db: aiosqlite.Connection) -> None:

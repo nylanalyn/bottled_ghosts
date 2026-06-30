@@ -32,7 +32,7 @@ def ask_bool(prompt: str, default: bool) -> bool:
     raise ValueError(f"{prompt} must be yes or no")
 
 
-def collect_configuration() -> tuple[str, Path, IRCProfile, LLMProfile, int, int, float]:
+def collect_configuration() -> tuple[str, Path, IRCProfile, LLMProfile, int, int, float, bool]:
     print("Bottle identity")
     name = ask("Bottle name")
     soul_path = Path(ask("Soul prompt path"))
@@ -65,10 +65,11 @@ def collect_configuration() -> tuple[str, Path, IRCProfile, LLMProfile, int, int
     max_lines = ask_int("Maximum reply lines", 2)
     max_chars = ask_int("Maximum characters per line", 400)
     cooldown = ask_float("Seconds between lines", 1.0)
+    extract_memories = ask_bool("Extract pending memory candidates", False)
 
     irc = IRCProfile(network=network, host=host, port=port, tls=tls, nick=nick,
                      username=username, realname=realname, channels=channels, password=password,
                      sasl_username=sasl_username, sasl_password=sasl_password)
     llm = LLMProfile(endpoint=endpoint, model=model, api_key=api_key,
                      temperature=temperature, max_tokens=max_tokens)
-    return name, soul_path, irc, llm, max_lines, max_chars, cooldown
+    return name, soul_path, irc, llm, max_lines, max_chars, cooldown, extract_memories

@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 003.
+The schema below reflects migration 004.
 
 ## schema_migrations
 
@@ -18,7 +18,7 @@ Stores OpenAI-compatible HTTP configuration. Columns: `id INTEGER PRIMARY KEY`, 
 
 ## bots
 
-Stores bottle definitions and enforced output limits. Columns: `id INTEGER PRIMARY KEY`, `name TEXT NOT NULL UNIQUE`, `enabled INTEGER NOT NULL`, `soul_prompt_path TEXT NOT NULL`, `llm_profile_id INTEGER NOT NULL`, `irc_profile_id INTEGER NOT NULL`, `max_lines INTEGER NOT NULL`, `max_chars INTEGER NOT NULL`, `cooldown_seconds REAL NOT NULL`.
+Stores bottle definitions and enforced output limits. Columns: `id INTEGER PRIMARY KEY`, `name TEXT NOT NULL UNIQUE`, `enabled INTEGER NOT NULL`, `soul_prompt_path TEXT NOT NULL`, `llm_profile_id INTEGER NOT NULL`, `irc_profile_id INTEGER NOT NULL`, `max_lines INTEGER NOT NULL`, `max_chars INTEGER NOT NULL`, `cooldown_seconds REAL NOT NULL`, `extract_memories INTEGER NOT NULL DEFAULT 0`.
 
 Foreign keys: `llm_profile_id` references `llm_profiles(id)`; `irc_profile_id` references `irc_profiles(id)`.
 
@@ -42,8 +42,17 @@ Foreign key: `user_id` references `users(id)` with cascading deletion. Indexes: 
 
 FTS5 external-content virtual table indexing `messages.body` with `messages.id` as its row ID. The `messages_fts_insert`, `messages_fts_delete`, and `messages_fts_update` triggers keep it synchronized with `messages`.
 
+## memory_candidates
+
+Stores unreviewed sediment proposed by the extractor. Columns: `id INTEGER PRIMARY KEY`, `user_id TEXT NOT NULL`, `source_message_id INTEGER NOT NULL`, `candidate_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `status TEXT NOT NULL DEFAULT 'pending'`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `reviewed_at TEXT`.
+
+Foreign keys: `user_id` references `users(id)` with cascading deletion; `source_message_id` references `messages(id)` with cascading deletion. A unique constraint on `(user_id, source_message_id, candidate_text)` prevents duplicate extraction. Indexes: `memory_candidates_review_idx(status, created_at, id)` supports the review queue; `memory_candidates_user_idx(user_id, status, id DESC)` supports per-user inspection.
+
+Allowed `memory_type` values are `preference`, `project`, `relationship`, `identity`, and `temporary_state`. Allowed statuses are `pending`, `approved`, and `rejected`.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
 - 002: Add optional IRC SASL username and password fields.
 - 003: Add UUID users, observed IRC identities, message ownership, and FTS5 message search.
+- 004: Add per-Bottle extraction control and the pending memory-candidate review queue.

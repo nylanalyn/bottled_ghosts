@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from pydantic import BaseModel, Field, model_validator
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+MemoryType = Literal["preference", "project", "relationship", "identity", "temporary_state"]
 
 
 class IRCProfile(BaseModel):
@@ -40,6 +44,7 @@ class Bottle(BaseModel):
     max_lines: int = Field(default=2, ge=1)
     max_chars: int = Field(default=400, ge=1, le=450)
     cooldown_seconds: float = Field(default=1.0, ge=0)
+    extract_memories: bool = False
 
 
 class IRCMessage(BaseModel):
@@ -66,3 +71,18 @@ class BottleSummary(BaseModel):
     network: str
     nick: str
     channels: list[str]
+    extract_memories: bool
+
+
+class ExtractedMemory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=500)
+    type: MemoryType
+    confidence: float = Field(ge=0, le=1)
+
+
+class ExtractedMemories(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidates: list[ExtractedMemory] = Field(max_length=3)

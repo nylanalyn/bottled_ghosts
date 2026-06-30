@@ -6,10 +6,11 @@ import aiosqlite
 from cellar.irc import IRCClient
 from cellar.identity import resolve_user
 from cellar.llm import complete
+from cellar.memory import extract_candidates
 from cellar.models import Bottle, IRCMessage, IncomingIRCMessage
 from cellar.prompt import build_prompt, read_soul
 from cellar.safety import Cooldown, sanitize
-from cellar.storage import log_message, recent_messages, search_messages
+from cellar.storage import log_message, recent_messages, search_messages, store_memory_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,15 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
             await log_message(db, IRCMessage(network=bottle.irc.network, channel=reply_target,
                               speaker=bottle.irc.nick, body=line, bot_id=bottle.id))
         logger.info("sent %d reply line(s) to %s", len(lines), reply_target)
+        if bottle.extract_memories:
+            try:
+                candidates = await extract_candidates(bottle.llm, speaker=speaker, body=body)
+                inserted = await store_memory_candidates(
+                    db, user_id=user_id, source_message_id=message_id, candidates=candidates,
+                )
+                logger.info("stored %d pending memory candidate(s) for %s", inserted, speaker)
+            except Exception:
+                logger.exception("memory extraction failed for message %d", message_id)
 
     client = IRCClient(bottle.irc, on_message)
     await client.run()

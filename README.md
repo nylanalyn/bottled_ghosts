@@ -37,6 +37,17 @@ LLM call, exact matches from the current network and channel are retrieved and
 added to the prompt ahead of recent conversation context. No embedding service
 is required.
 
+Sediment extraction is disabled by default because it adds a second LLM call
+after each handled message. Enable it explicitly for a Bottle:
+
+```bash
+bottled-ghosts memory-extraction 1 on
+```
+
+The extractor may write categorized candidates to SQLite, but all candidates
+remain pending and are not used as trusted memory. Disable extraction with the
+same command and `off`.
+
 To add or replace SASL credentials on an existing Bottle:
 
 ```bash

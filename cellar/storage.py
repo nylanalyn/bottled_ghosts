@@ -4,7 +4,14 @@ from pathlib import Path
 import aiosqlite
 
 from cellar.migrations import migrate
-from cellar.models import Bottle, BottleSummary, IRCMessage, IRCProfile, LLMProfile
+from cellar.models import (
+    Bottle,
+    BottleSummary,
+    ExtractedMemory,
+    IRCMessage,
+    IRCProfile,
+    LLMProfile,
+)
 
 
 async def open_database(path: Path) -> aiosqlite.Connection:
@@ -31,7 +38,7 @@ async def load_bottle(db: aiosqlite.Connection, bottle_id: int) -> Bottle:
     return Bottle(
         id=row["id"], name=row["name"], soul_prompt_path=Path(row["soul_prompt_path"]),
         max_lines=row["max_lines"], max_chars=row["max_chars"],
-        cooldown_seconds=row["cooldown_seconds"],
+        cooldown_seconds=row["cooldown_seconds"], extract_memories=bool(row["extract_memories"]),
         irc=IRCProfile(network=row["network"], host=row["host"], port=row["port"],
             tls=bool(row["tls"]), nick=row["nick"], username=row["username"],
             realname=row["realname"], channels=json.loads(row["channels"]),
@@ -44,7 +51,7 @@ async def load_bottle(db: aiosqlite.Connection, bottle_id: int) -> Bottle:
 
 async def list_bottles(db: aiosqlite.Connection) -> list[BottleSummary]:
     cursor = await db.execute(
-        """SELECT b.id, b.name, b.enabled, i.network, i.nick, i.channels
+        """SELECT b.id, b.name, b.enabled, b.extract_memories, i.network, i.nick, i.channels
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
            ORDER BY b.id"""
     )
@@ -52,7 +59,8 @@ async def list_bottles(db: aiosqlite.Connection) -> list[BottleSummary]:
     return [
         BottleSummary(id=row["id"], name=row["name"], enabled=bool(row["enabled"]),
                       network=row["network"], nick=row["nick"],
-                      channels=json.loads(row["channels"]))
+                      channels=json.loads(row["channels"]),
+                      extract_memories=bool(row["extract_memories"]))
         for row in rows
     ]
 
@@ -72,6 +80,7 @@ async def create_bottle(
     max_lines: int = 2,
     max_chars: int = 400,
     cooldown_seconds: float = 1.0,
+    extract_memories: bool = False,
 ) -> int:
     """Persist one complete Bottle configuration as a visible transaction."""
     try:
@@ -93,10 +102,10 @@ async def create_bottle(
         bottle_cursor = await db.execute(
             """INSERT INTO bots(
                    name, soul_prompt_path, llm_profile_id, irc_profile_id,
-                   max_lines, max_chars, cooldown_seconds
-               ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   max_lines, max_chars, cooldown_seconds, extract_memories
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (name, str(soul_prompt_path), llm_cursor.lastrowid, irc_cursor.lastrowid,
-             max_lines, max_chars, cooldown_seconds),
+             max_lines, max_chars, cooldown_seconds, extract_memories),
         )
         await db.commit()
     except Exception:
@@ -119,6 +128,42 @@ async def set_sasl_credentials(
         await db.rollback()
         raise LookupError(f"Bottle {bottle_id} does not exist")
     await db.commit()
+
+
+async def set_memory_extraction(
+    db: aiosqlite.Connection, *, bottle_id: int, enabled: bool
+) -> None:
+    cursor = await db.execute(
+        "UPDATE bots SET extract_memories = ? WHERE id = ?", (enabled, bottle_id)
+    )
+    if cursor.rowcount != 1:
+        await db.rollback()
+        raise LookupError(f"Bottle {bottle_id} does not exist")
+    await db.commit()
+
+
+async def store_memory_candidates(
+    db: aiosqlite.Connection,
+    *,
+    user_id: str,
+    source_message_id: int,
+    candidates: list[ExtractedMemory],
+) -> int:
+    inserted = 0
+    try:
+        for candidate in candidates:
+            cursor = await db.execute(
+                """INSERT OR IGNORE INTO memory_candidates(
+                       user_id, source_message_id, candidate_text, memory_type, confidence
+                   ) VALUES (?, ?, ?, ?, ?)""",
+                (user_id, source_message_id, candidate.text, candidate.type, candidate.confidence),
+            )
+            inserted += max(cursor.rowcount, 0)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    return inserted
 
 
 async def log_message(db: aiosqlite.Connection, message: IRCMessage) -> int:

@@ -4,13 +4,19 @@ import logging
 import ssl
 from collections.abc import Awaitable, Callable
 
-from cellar.models import IRCProfile
+from cellar.models import IRCProfile, IncomingIRCMessage
 
-MessageHandler = Callable[[str, str, str], Awaitable[None]]
+MessageHandler = Callable[[IncomingIRCMessage], Awaitable[None]]
 logger = logging.getLogger(__name__)
 
 
-def parse_privmsg(line: str) -> tuple[str, str, str] | None:
+def parse_privmsg(line: str) -> IncomingIRCMessage | None:
+    tags: dict[str, str | None] = {}
+    if line.startswith("@"):
+        raw_tags, line = line.split(" ", 1)
+        for item in raw_tags[1:].split(";"):
+            key, separator, value = item.partition("=")
+            tags[key] = value if separator else None
     if not line.startswith(":") or " PRIVMSG " not in line or " :" not in line:
         return None
     prefix, rest = line[1:].split(" ", 1)
@@ -18,7 +24,11 @@ def parse_privmsg(line: str) -> tuple[str, str, str] | None:
     parts = command.split()
     if len(parts) != 2 or parts[0] != "PRIVMSG":
         return None
-    return prefix.split("!", 1)[0], parts[1], body
+    nick, separator, hostmask = prefix.partition("!")
+    account = tags.get("account")
+    return IncomingIRCMessage(nick=nick, hostmask=hostmask if separator else None,
+                              account=account if account and account != "*" else None,
+                              target=parts[1], body=body)
 
 
 def sasl_plain_chunks(username: str, password: str) -> list[str]:
@@ -80,15 +90,29 @@ class IRCClient:
                     if self.profile.sasl_username:
                         if "sasl" not in self.capabilities:
                             raise RuntimeError("IRC server does not advertise SASL")
+                    requested = []
+                    if self.profile.sasl_username:
                         logger.info("requesting SASL PLAIN authentication")
-                        await self.send_raw("CAP REQ :sasl")
+                        requested.append("sasl")
+                    if "account-tag" in self.capabilities:
+                        requested.append("account-tag")
+                    if requested:
+                        await self.send_raw(f"CAP REQ :{' '.join(requested)}")
                     else:
                         await self.send_raw("CAP END")
                     continue
-                if " CAP " in line and " NAK " in line and "sasl" in line.rsplit(" :", 1)[-1].split():
-                    raise RuntimeError("IRC server rejected the SASL capability request")
-                if " CAP " in line and " ACK " in line and "sasl" in line.rsplit(" :", 1)[-1].split():
-                    await self.send_raw("AUTHENTICATE PLAIN")
+                if " CAP " in line and " NAK " in line:
+                    rejected = line.rsplit(" :", 1)[-1].split()
+                    if self.profile.sasl_username and "sasl" in rejected:
+                        raise RuntimeError("IRC server rejected the SASL capability request")
+                    await self.send_raw("CAP END")
+                    continue
+                if " CAP " in line and " ACK " in line:
+                    acknowledged = line.rsplit(" :", 1)[-1].split()
+                    if "sasl" in acknowledged:
+                        await self.send_raw("AUTHENTICATE PLAIN")
+                    else:
+                        await self.send_raw("CAP END")
                     continue
                 if line == "AUTHENTICATE +":
                     await self.authenticate_sasl_plain()
@@ -112,9 +136,10 @@ class IRCClient:
                 parsed = parse_privmsg(line)
                 if parsed:
                     try:
-                        await self.handler(*parsed)
+                        await self.handler(parsed)
                     except Exception:
-                        logger.exception("failed to handle message from %s in %s", parsed[0], parsed[1])
+                        logger.exception("failed to handle message from %s in %s",
+                                         parsed.nick, parsed.target)
             raise ConnectionError("IRC server closed the connection")
         finally:
             self.writer.close()

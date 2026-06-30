@@ -31,6 +31,12 @@ bottled-ghosts run-all
 Each Bottle reconnects independently with exponential backoff capped at 60
 seconds. Ctrl-C cancels all Bottle tasks and closes their IRC connections.
 
+Incoming speakers are resolved to UUIDs from IRC account tags, hostmasks, and
+nicks, in that order. Message bodies are indexed by SQLite FTS5. Before every
+LLM call, exact matches from the current network and channel are retrieved and
+added to the prompt ahead of recent conversation context. No embedding service
+is required.
+
 To add or replace SASL credentials on an existing Bottle:
 
 ```bash

@@ -4,11 +4,12 @@ import logging
 import aiosqlite
 
 from cellar.irc import IRCClient
+from cellar.identity import resolve_user
 from cellar.llm import complete
-from cellar.models import Bottle, IRCMessage
+from cellar.models import Bottle, IRCMessage, IncomingIRCMessage
 from cellar.prompt import build_prompt, read_soul
 from cellar.safety import Cooldown, sanitize
-from cellar.storage import log_message, recent_messages
+from cellar.storage import log_message, recent_messages, search_messages
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +19,13 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
     cooldown = Cooldown(bottle.cooldown_seconds)
     client: IRCClient
 
-    async def on_message(speaker: str, channel: str, body: str) -> None:
-        incoming = IRCMessage(network=bottle.irc.network, channel=channel, speaker=speaker,
-                              body=body, bot_id=bottle.id)
-        await log_message(db, incoming)
+    async def on_message(message: IncomingIRCMessage) -> None:
+        user_id = await resolve_user(db, network=bottle.irc.network, identity=message)
+        incoming = IRCMessage(network=bottle.irc.network, channel=message.target,
+                              speaker=message.nick, body=message.body, bot_id=bottle.id,
+                              user_id=user_id)
+        message_id = await log_message(db, incoming)
+        speaker, channel, body = message.nick, message.target, message.body
         direct_message = channel.casefold() == bottle.irc.nick.casefold()
         if not direct_message and bottle.irc.nick.casefold() not in body.casefold():
             return
@@ -29,7 +33,12 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
         logger.info("generating reply to %s in %s", speaker, reply_target)
         history = await recent_messages(db, bot_id=bottle.id, network=bottle.irc.network,
                                         channel=channel)
-        prompt = build_prompt(soul=soul, history=history[:-1], speaker=speaker, body=body)
+        relevant = await search_messages(
+            db, bot_id=bottle.id, network=bottle.irc.network, channel=channel,
+            text=body, exclude_message_id=message_id,
+        )
+        prompt = build_prompt(soul=soul, relevant=relevant, history=history[:-1],
+                              speaker=speaker, body=body)
         response = await complete(bottle.llm, prompt)
         lines = sanitize(response, max_lines=bottle.max_lines, max_chars=bottle.max_chars)
         if not lines:

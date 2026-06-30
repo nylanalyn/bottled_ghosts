@@ -121,12 +121,17 @@ async def set_sasl_credentials(
     await db.commit()
 
 
-async def log_message(db: aiosqlite.Connection, message: IRCMessage) -> None:
-    await db.execute(
-        "INSERT INTO messages(network, channel, speaker, body, bot_id) VALUES (?, ?, ?, ?, ?)",
-        (message.network, message.channel, message.speaker, message.body, message.bot_id),
+async def log_message(db: aiosqlite.Connection, message: IRCMessage) -> int:
+    cursor = await db.execute(
+        """INSERT INTO messages(network, channel, speaker, body, bot_id, user_id)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (message.network, message.channel, message.speaker, message.body, message.bot_id,
+         message.user_id),
     )
     await db.commit()
+    if cursor.lastrowid is None:
+        raise RuntimeError("SQLite did not return a message id")
+    return cursor.lastrowid
 
 
 async def recent_messages(
@@ -138,3 +143,38 @@ async def recent_messages(
     )
     rows = await cursor.fetchall()
     return [(row["speaker"], row["body"]) for row in reversed(rows)]
+
+
+def exact_search_query(text: str) -> str | None:
+    words = []
+    for raw in text.split():
+        word = "".join(character for character in raw if character.isalnum() or character == "_")
+        if len(word) >= 3 and word.casefold() not in {item.casefold() for item in words}:
+            words.append(word)
+        if len(words) == 8:
+            break
+    return " OR ".join(f'"{word}"' for word in words) if words else None
+
+
+async def search_messages(
+    db: aiosqlite.Connection,
+    *,
+    bot_id: int,
+    network: str,
+    channel: str,
+    text: str,
+    exclude_message_id: int | None = None,
+    limit: int = 5,
+) -> list[tuple[str, str]]:
+    query = exact_search_query(text)
+    if query is None:
+        return []
+    cursor = await db.execute(
+        """SELECT m.speaker, m.body FROM messages_fts f
+           JOIN messages m ON m.id = f.rowid
+           WHERE messages_fts MATCH ? AND m.bot_id = ? AND m.network = ? AND m.channel = ?
+             AND (? IS NULL OR m.id <> ?)
+           ORDER BY bm25(messages_fts), m.id DESC LIMIT ?""",
+        (query, bot_id, network, channel, exclude_message_id, exclude_message_id, limit),
+    )
+    return [(row["speaker"], row["body"]) for row in await cursor.fetchall()]

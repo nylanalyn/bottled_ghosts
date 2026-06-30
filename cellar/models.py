@@ -48,6 +48,15 @@ class IRCMessage(BaseModel):
     speaker: str
     body: str
     bot_id: int
+    user_id: str | None = None
+
+
+class IncomingIRCMessage(BaseModel):
+    nick: str
+    hostmask: str | None
+    account: str | None
+    target: str
+    body: str
 
 
 class BottleSummary(BaseModel):

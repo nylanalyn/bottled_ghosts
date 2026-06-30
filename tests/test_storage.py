@@ -9,6 +9,7 @@ from cellar.storage import (
     log_message,
     open_database,
     recent_messages,
+    search_messages,
     set_sasl_credentials,
 )
 
@@ -37,6 +38,21 @@ async def test_migration_configuration_and_logging(tmp_path) -> None:
 
         message = IRCMessage(network="local", channel="#test", speaker="alice", body="hi", bot_id=1)
         await log_message(db, message)
-        assert await recent_messages(db, bot_id=1, network="local", channel="#test") == [("alice", "hi")]
+        searchable_id = await log_message(
+            db, IRCMessage(network="local", channel="#test", speaker="alice",
+                           body="the brass telescope is repaired", bot_id=1)
+        )
+        assert await recent_messages(db, bot_id=1, network="local", channel="#test") == [
+            ("alice", "hi"),
+            ("alice", "the brass telescope is repaired"),
+        ]
+        assert await search_messages(
+            db, bot_id=1, network="local", channel="#test", text="telescope status",
+            exclude_message_id=None,
+        ) == [("alice", "the brass telescope is repaired")]
+        assert await search_messages(
+            db, bot_id=1, network="local", channel="#test", text="telescope",
+            exclude_message_id=searchable_id,
+        ) == []
     finally:
         await db.close()

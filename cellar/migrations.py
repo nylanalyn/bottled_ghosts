@@ -63,7 +63,58 @@ async def migration_002(db: aiosqlite.Connection) -> None:
     )
 
 
-MIGRATIONS: tuple[Migration, ...] = (migration_001, migration_002)
+async def migration_003(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE users (
+            id TEXT PRIMARY KEY,
+            canonical_name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE user_identities (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            nick TEXT NOT NULL,
+            account TEXT,
+            hostmask TEXT,
+            confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+            first_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX user_identities_account_idx
+            ON user_identities(network, account) WHERE account IS NOT NULL;
+        CREATE INDEX user_identities_hostmask_idx
+            ON user_identities(network, hostmask) WHERE hostmask IS NOT NULL;
+        CREATE INDEX user_identities_nick_idx
+            ON user_identities(network, nick COLLATE NOCASE);
+
+        ALTER TABLE messages ADD COLUMN user_id TEXT REFERENCES users(id);
+        CREATE INDEX messages_user_idx ON messages(user_id, id DESC);
+
+        CREATE VIRTUAL TABLE messages_fts USING fts5(
+            body,
+            content='messages',
+            content_rowid='id'
+        );
+        INSERT INTO messages_fts(rowid, body) SELECT id, body FROM messages;
+        CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages BEGIN
+            INSERT INTO messages_fts(rowid, body) VALUES (new.id, new.body);
+        END;
+        CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, body)
+            VALUES ('delete', old.id, old.body);
+        END;
+        CREATE TRIGGER messages_fts_update AFTER UPDATE OF body ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, body)
+            VALUES ('delete', old.id, old.body);
+            INSERT INTO messages_fts(rowid, body) VALUES (new.id, new.body);
+        END;
+        """
+    )
+
+
+MIGRATIONS: tuple[Migration, ...] = (migration_001, migration_002, migration_003)
 
 
 async def migrate(db: aiosqlite.Connection) -> None:

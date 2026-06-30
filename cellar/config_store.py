@@ -24,6 +24,7 @@ class BottleSettings(BaseModel):
     max_lines: int = Field(ge=1)
     max_chars: int = Field(ge=1, le=450)
     cooldown_seconds: float = Field(ge=0)
+    listen_window_seconds: float = Field(gt=0)
 
 
 async def load_bottle_settings(
@@ -31,7 +32,8 @@ async def load_bottle_settings(
 ) -> BottleSettings:
     row = await (await db.execute(
         """SELECT b.id, b.name, b.soul_prompt_path, b.max_lines, b.max_chars,
-                  b.cooldown_seconds, i.network, i.host, i.port, i.tls, i.nick,
+                  b.cooldown_seconds, b.listen_window_seconds,
+                  i.network, i.host, i.port, i.tls, i.nick,
                   i.username, i.realname, i.channels, l.endpoint, l.model,
                   l.temperature, l.max_tokens
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
@@ -63,9 +65,11 @@ async def save_bottle_settings(
         await db.execute("BEGIN IMMEDIATE")
         await db.execute(
             """UPDATE bots SET name = ?, soul_prompt_path = ?, max_lines = ?,
-                   max_chars = ?, cooldown_seconds = ? WHERE id = ?""",
+                   max_chars = ?, cooldown_seconds = ?, listen_window_seconds = ?
+               WHERE id = ?""",
             (settings.name, str(settings.soul_prompt_path), settings.max_lines,
-             settings.max_chars, settings.cooldown_seconds, settings.id),
+             settings.max_chars, settings.cooldown_seconds,
+             settings.listen_window_seconds, settings.id),
         )
         await db.execute(
             """UPDATE irc_profiles SET network = ?, host = ?, port = ?, tls = ?, nick = ?,

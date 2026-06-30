@@ -52,13 +52,12 @@ async def async_main(args: argparse.Namespace) -> None:
                 print(f"{bottle.id}\t{state}\t{memory}\t{bottle.name}\t"
                       f"{bottle.nick}@{bottle.network}\t{channels}")
         elif args.command == "configure":
-            name, soul, irc, llm, max_lines, max_chars, cooldown, extract_memories = (
-                collect_configuration()
-            )
+            (name, soul, irc, llm, max_lines, max_chars, cooldown, listen_window,
+             extract_memories) = collect_configuration()
             created_id = await create_bottle(
                 db, name=name, soul_prompt_path=soul, irc=irc, llm=llm,
                 max_lines=max_lines, max_chars=max_chars, cooldown_seconds=cooldown,
-                extract_memories=extract_memories,
+                listen_window_seconds=listen_window, extract_memories=extract_memories,
             )
             print(f"Created Bottle {created_id}: {name}")
         elif args.command == "set-sasl":

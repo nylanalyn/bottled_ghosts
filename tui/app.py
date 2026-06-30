@@ -154,6 +154,7 @@ class BottledGhostsApp(App[None]):
                         ("Maximum IRC reply lines", "config-max-lines", "integer"),
                         ("Maximum characters per line", "config-max-chars", "integer"),
                         ("Cooldown seconds", "config-cooldown", "number"),
+                        ("Listening window seconds", "config-listen-window", "number"),
                     ):
                         yield Label(label)
                         yield Input(
@@ -515,6 +516,7 @@ class BottledGhostsApp(App[None]):
             "config-max-lines": str(settings.max_lines),
             "config-max-chars": str(settings.max_chars),
             "config-cooldown": str(settings.cooldown_seconds),
+            "config-listen-window": str(settings.listen_window_seconds),
         }
         for field_id, value in values.items():
             self.query_one(f"#{field_id}", Input).value = value
@@ -543,6 +545,7 @@ class BottledGhostsApp(App[None]):
             max_lines=int(value("config-max-lines")),
             max_chars=int(value("config-max-chars")),
             cooldown_seconds=float(value("config-cooldown")),
+            listen_window_seconds=float(value("config-listen-window")),
         )
 
     async def action_save_configuration(self) -> None:
@@ -566,7 +569,9 @@ class BottledGhostsApp(App[None]):
                         temperature=settings.temperature, max_tokens=settings.max_tokens,
                     ),
                     max_lines=settings.max_lines, max_chars=settings.max_chars,
-                    cooldown_seconds=settings.cooldown_seconds, actor=self.actor,
+                    cooldown_seconds=settings.cooldown_seconds,
+                    listen_window_seconds=settings.listen_window_seconds,
+                    actor=self.actor,
                 )
                 self.selected_bottle_id = created_id
                 self.creating_bottle = False
@@ -593,6 +598,7 @@ class BottledGhostsApp(App[None]):
             "config-endpoint": "", "config-model": "", "config-temperature": "0.7",
             "config-max-tokens": "160", "config-max-lines": "2",
             "config-max-chars": "400", "config-cooldown": "1.0",
+            "config-listen-window": "8.0",
         }
         for field_id, value in defaults.items():
             self.query_one(f"#{field_id}", Input).value = value

@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 008.
+The schema below reflects migration 009.
 
 ## schema_migrations
 
@@ -18,7 +18,7 @@ Stores OpenAI-compatible HTTP configuration. Columns: `id INTEGER PRIMARY KEY`, 
 
 ## bots
 
-Stores bottle definitions and enforced output limits. Columns: `id INTEGER PRIMARY KEY`, `name TEXT NOT NULL UNIQUE`, `enabled INTEGER NOT NULL`, `soul_prompt_path TEXT NOT NULL`, `llm_profile_id INTEGER NOT NULL`, `irc_profile_id INTEGER NOT NULL`, `max_lines INTEGER NOT NULL`, `max_chars INTEGER NOT NULL`, `cooldown_seconds REAL NOT NULL`, `extract_memories INTEGER NOT NULL DEFAULT 0`.
+Stores bottle definitions and enforced output limits. Columns: `id INTEGER PRIMARY KEY`, `name TEXT NOT NULL UNIQUE`, `enabled INTEGER NOT NULL`, `soul_prompt_path TEXT NOT NULL`, `llm_profile_id INTEGER NOT NULL`, `irc_profile_id INTEGER NOT NULL`, `max_lines INTEGER NOT NULL`, `max_chars INTEGER NOT NULL`, `cooldown_seconds REAL NOT NULL`, `listen_window_seconds REAL NOT NULL DEFAULT 8.0`, `extract_memories INTEGER NOT NULL DEFAULT 0`.
 
 Foreign keys: `llm_profile_id` references `llm_profiles(id)`; `irc_profile_id` references `irc_profiles(id)`.
 
@@ -84,3 +84,4 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 - 006: Add canonical per-Bottle module enablement and settings.
 - 007: Add persistent Bottle dream summaries with explicit period boundaries.
 - 008: Add append-only, secret-free Bottle configuration audit events.
+- 009: Add the per-Bottle listening-window duration.

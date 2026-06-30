@@ -44,6 +44,7 @@ class Bottle(BaseModel):
     max_lines: int = Field(default=2, ge=1)
     max_chars: int = Field(default=400, ge=1, le=450)
     cooldown_seconds: float = Field(default=1.0, ge=0)
+    listen_window_seconds: float = Field(default=8.0, gt=0)
     extract_memories: bool = False
 
 

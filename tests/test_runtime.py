@@ -3,8 +3,15 @@ import time
 
 import pytest
 
-from cellar.models import Bottle, IRCProfile, LLMProfile
-from cellar.runtime import run_bottle, run_bottles
+from cellar.models import (
+    Bottle,
+    ExtractedMemory,
+    IRCProfile,
+    IncomingIRCMessage,
+    LLMProfile,
+)
+from cellar.runtime import run_bottle, run_bottle_once, run_bottles
+from cellar.storage import create_bottle, load_bottle, open_database
 
 
 @pytest.mark.asyncio
@@ -115,3 +122,90 @@ async def test_run_bottles_opens_and_closes_one_connection_each(monkeypatch, tmp
     assert connections[0] is not connections[1]
     assert sorted(bottle_id for _connection, bottle_id in seen) == [1, 2]
     assert all(connection.closed for connection in connections)
+
+
+@pytest.mark.asyncio
+async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
+    monkeypatch, tmp_path,
+) -> None:
+    database = tmp_path / "window.db"
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(database)
+    bottle_id = await create_bottle(
+        db, name="test", soul_prompt_path=soul,
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost", channels=["#test"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+        listen_window_seconds=0.01, extract_memories=True,
+    )
+    bottle = await load_bottle(db, bottle_id)
+    hook_counts = {"on_message": 0, "before_prompt": 0, "after_response": 0}
+    prompts: list[list[dict[str, str]]] = []
+    extracted_bodies: list[str] = []
+    sent: list[tuple[str, str]] = []
+
+    class FakeModules:
+        async def on_message(self, _context) -> None:
+            hook_counts["on_message"] += 1
+
+        async def before_prompt(self, _context) -> None:
+            hook_counts["before_prompt"] += 1
+
+        async def after_response(self, _context) -> None:
+            hook_counts["after_response"] += 1
+
+    class FakeIRCClient:
+        def __init__(self, _profile, handler) -> None:
+            self.handler = handler
+
+        async def run(self) -> None:
+            await self.handler(IncomingIRCMessage(
+                nick="alice", hostmask="u@host", account=None,
+                target="#test", body="ghost: first line",
+            ))
+            await self.handler(IncomingIRCMessage(
+                nick="alice", hostmask="u@host", account=None,
+                target="#test", body="second line",
+            ))
+            await self.handler(IncomingIRCMessage(
+                nick="bob", hostmask="bob@host", account=None,
+                target="#test", body="unaddressed interjection",
+            ))
+            await asyncio.sleep(0.03)
+
+        async def send_message(self, target: str, body: str) -> None:
+            sent.append((target, body))
+
+    async def fake_load_modules(_db, *, bottle_id: int):
+        assert bottle_id == bottle.id
+        return FakeModules()
+
+    async def fake_complete(_profile, prompt: list[dict[str, str]]) -> str:
+        prompts.append(prompt)
+        return "one reply"
+
+    async def fake_extract(_profile, *, speaker: str, body: str):
+        assert speaker == "alice"
+        extracted_bodies.append(body)
+        return [ExtractedMemory(text="Test memory", type="project", confidence=0.8)]
+
+    monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+    monkeypatch.setattr("cellar.runtime.load_modules", fake_load_modules)
+    monkeypatch.setattr("cellar.runtime.complete", fake_complete)
+    monkeypatch.setattr("cellar.runtime.extract_candidates", fake_extract)
+
+    try:
+        await run_bottle_once(db, bottle)
+        assert hook_counts == {"on_message": 3, "before_prompt": 1, "after_response": 1}
+        assert len(prompts) == 1
+        assert "ghost: first line\nsecond line" in prompts[0][1]["content"]
+        assert extracted_bodies == ["ghost: first line\nsecond line"]
+        assert sent == [("#test", "one reply")]
+        source = await (await db.execute(
+            """SELECT m.body FROM memory_candidates c
+               JOIN messages m ON m.id = c.source_message_id"""
+        )).fetchone()
+        assert source is not None and source[0] == "second line"
+    finally:
+        await db.close()

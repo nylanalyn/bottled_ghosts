@@ -31,9 +31,11 @@ class Cooldown:
     def __init__(self, seconds: float) -> None:
         self.seconds = seconds
         self._last_send = 0.0
+        self._lock = asyncio.Lock()
 
     async def wait(self) -> None:
-        delay = self.seconds - (time.monotonic() - self._last_send)
-        if delay > 0:
-            await asyncio.sleep(delay)
-        self._last_send = time.monotonic()
+        async with self._lock:
+            delay = self.seconds - (time.monotonic() - self._last_send)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._last_send = time.monotonic()

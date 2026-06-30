@@ -249,9 +249,16 @@ async def migration_008(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_009(db: aiosqlite.Connection) -> None:
+    await db.execute(
+        """ALTER TABLE bots ADD COLUMN listen_window_seconds REAL NOT NULL DEFAULT 8.0
+           CHECK (listen_window_seconds > 0)"""
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
-    migration_006, migration_007, migration_008,
+    migration_006, migration_007, migration_008, migration_009,
 )
 
 

@@ -45,7 +45,9 @@ def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
     return Bottle(
         id=row["id"], name=row["name"], soul_prompt_path=Path(row["soul_prompt_path"]),
         max_lines=row["max_lines"], max_chars=row["max_chars"],
-        cooldown_seconds=row["cooldown_seconds"], extract_memories=bool(row["extract_memories"]),
+        cooldown_seconds=row["cooldown_seconds"],
+        listen_window_seconds=row["listen_window_seconds"],
+        extract_memories=bool(row["extract_memories"]),
         irc=IRCProfile(network=row["network"], host=row["host"], port=row["port"],
             tls=bool(row["tls"]), nick=row["nick"], username=row["username"],
             realname=row["realname"], channels=json.loads(row["channels"]),
@@ -95,6 +97,7 @@ async def create_bottle(
     max_lines: int = 2,
     max_chars: int = 400,
     cooldown_seconds: float = 1.0,
+    listen_window_seconds: float = 8.0,
     extract_memories: bool = False,
     actor: str | None = None,
 ) -> int:
@@ -118,10 +121,12 @@ async def create_bottle(
         bottle_cursor = await db.execute(
             """INSERT INTO bots(
                    name, soul_prompt_path, llm_profile_id, irc_profile_id,
-                   max_lines, max_chars, cooldown_seconds, extract_memories
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   max_lines, max_chars, cooldown_seconds, listen_window_seconds,
+                   extract_memories
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (name, str(soul_prompt_path), llm_cursor.lastrowid, irc_cursor.lastrowid,
-             max_lines, max_chars, cooldown_seconds, extract_memories),
+             max_lines, max_chars, cooldown_seconds, listen_window_seconds,
+             extract_memories),
         )
         if bottle_cursor.lastrowid is None:
             raise RuntimeError("SQLite did not return a Bottle id")
@@ -236,11 +241,15 @@ async def log_message(db: aiosqlite.Connection, message: IRCMessage) -> int:
 
 
 async def recent_messages(
-    db: aiosqlite.Connection, *, bot_id: int, network: str, channel: str, limit: int = 20
+    db: aiosqlite.Connection, *, bot_id: int, network: str, channel: str,
+    exclude_message_ids: list[int] | None = None, limit: int = 20,
 ) -> list[tuple[str, str]]:
+    excluded = exclude_message_ids or []
+    exclusion = f" AND id NOT IN ({','.join('?' for _ in excluded)})" if excluded else ""
     cursor = await db.execute(
         "SELECT speaker, body FROM messages WHERE bot_id = ? AND network = ? AND channel = ? "
-        "ORDER BY id DESC LIMIT ?", (bot_id, network, channel, limit),
+        f"{exclusion} ORDER BY id DESC LIMIT ?",
+        (bot_id, network, channel, *excluded, limit),
     )
     rows = list(await cursor.fetchall())
     return [(row["speaker"], row["body"]) for row in reversed(rows)]
@@ -263,19 +272,23 @@ async def search_messages(
     network: str,
     channel: str,
     text: str,
-    exclude_message_id: int | None = None,
+    exclude_message_ids: list[int] | None = None,
     limit: int = 5,
 ) -> list[tuple[str, str]]:
     query = exact_search_query(text)
     if query is None:
         return []
+    excluded = exclude_message_ids or []
+    exclusion = (
+        f" AND m.id NOT IN ({','.join('?' for _ in excluded)})" if excluded else ""
+    )
     cursor = await db.execute(
-        """SELECT m.speaker, m.body FROM messages_fts f
+        f"""SELECT m.speaker, m.body FROM messages_fts f
            JOIN messages m ON m.id = f.rowid
            WHERE messages_fts MATCH ? AND m.bot_id = ? AND m.network = ? AND m.channel = ?
-             AND (? IS NULL OR m.id <> ?)
+             {exclusion}
            ORDER BY bm25(messages_fts), m.id DESC LIMIT ?""",
-        (query, bot_id, network, channel, exclude_message_id, exclude_message_id, limit),
+        (query, bot_id, network, channel, *excluded, limit),
     )
     return [(row["speaker"], row["body"]) for row in await cursor.fetchall()]
 

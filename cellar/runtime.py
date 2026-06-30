@@ -1,12 +1,14 @@
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import aiosqlite
 
 from cellar.irc import IRCClient
 from cellar.identity import resolve_user
+from cellar.listening import ListeningWindowManager
 from cellar.llm import complete
 from cellar.memory import extract_candidates
 from cellar.memory_store import approved_memory_texts, store_memory_candidates
@@ -21,67 +23,120 @@ from cellar.storage import log_message, open_database, recent_messages, search_m
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class WindowMessage:
+    message: IncomingIRCMessage
+    user_id: str
+    message_id: int
+
+
 async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
     soul = read_soul(bottle.soul_prompt_path)
     cooldown = Cooldown(bottle.cooldown_seconds)
     modules = await load_modules(db, bottle_id=bottle.id)
+    database_lock = asyncio.Lock()
     client: IRCClient
 
-    async def on_message(message: IncomingIRCMessage) -> None:
-        user_id = await resolve_user(db, network=bottle.irc.network, identity=message)
-        incoming = IRCMessage(network=bottle.irc.network, channel=message.target,
-                              speaker=message.nick, body=message.body, bot_id=bottle.id,
-                              user_id=user_id)
-        message_id = await log_message(db, incoming)
+    async def respond(items: tuple[WindowMessage, ...]) -> None:
+        latest = items[-1]
+        message = latest.message
+        user_id = latest.user_id
+        message_ids = [item.message_id for item in items]
+        body = "\n".join(item.message.body for item in items)
+        speaker, channel = message.nick, message.target
+        direct_message = channel.casefold() == bottle.irc.nick.casefold()
+        reply_target = speaker if direct_message else channel
         module_context = ModuleContext(
             db=db, bottle=bottle, message=message, user_id=user_id,
-            source_message_id=message_id,
+            source_message_id=latest.message_id,
         )
-        await modules.on_message(module_context)
-        speaker, channel, body = message.nick, message.target, message.body
-        direct_message = channel.casefold() == bottle.irc.nick.casefold()
-        if not direct_message and bottle.irc.nick.casefold() not in body.casefold():
-            return
-        reply_target = speaker if direct_message else channel
         logger.info("generating reply to %s in %s", speaker, reply_target)
-        history = await recent_messages(db, bot_id=bottle.id, network=bottle.irc.network,
-                                        channel=channel)
-        relevant = await search_messages(
-            db, bot_id=bottle.id, network=bottle.irc.network, channel=channel,
-            text=body, exclude_message_id=message_id,
-        )
-        memories = await approved_memory_texts(db, user_id=user_id)
-        dreams = await recent_dream_texts(db, bot_id=bottle.id)
-        await modules.before_prompt(module_context)
+        async with database_lock:
+            history = await recent_messages(
+                db, bot_id=bottle.id, network=bottle.irc.network, channel=channel,
+                exclude_message_ids=message_ids,
+            )
+            relevant = await search_messages(
+                db, bot_id=bottle.id, network=bottle.irc.network, channel=channel,
+                text=body, exclude_message_ids=message_ids,
+            )
+            memories = await approved_memory_texts(db, user_id=user_id)
+            dreams = await recent_dream_texts(db, bot_id=bottle.id)
+            await modules.before_prompt(module_context)
         prompt = build_prompt(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,
-            dreams=dreams,
-            relevant=relevant, history=history[:-1], speaker=speaker, body=body,
+            dreams=dreams, relevant=relevant, history=history, speaker=speaker, body=body,
         )
         response = await complete(bottle.llm, prompt)
         module_context.response = response
-        await modules.after_response(module_context)
+        async with database_lock:
+            await modules.after_response(module_context)
         lines = sanitize(response, max_lines=bottle.max_lines, max_chars=bottle.max_chars)
         if not lines:
             logger.warning("LLM response was empty after sanitization")
         for line in lines:
             await cooldown.wait()
             await client.send_message(reply_target, line)
-            await log_message(db, IRCMessage(network=bottle.irc.network, channel=reply_target,
-                              speaker=bottle.irc.nick, body=line, bot_id=bottle.id))
+            async with database_lock:
+                await log_message(
+                    db, IRCMessage(network=bottle.irc.network, channel=reply_target,
+                                   speaker=bottle.irc.nick, body=line, bot_id=bottle.id),
+                )
         logger.info("sent %d reply line(s) to %s", len(lines), reply_target)
         if bottle.extract_memories:
             try:
                 candidates = await extract_candidates(bottle.llm, speaker=speaker, body=body)
-                inserted = await store_memory_candidates(
-                    db, user_id=user_id, source_message_id=message_id, candidates=candidates,
-                )
+                async with database_lock:
+                    inserted = await store_memory_candidates(
+                        db, user_id=user_id, source_message_id=latest.message_id,
+                        candidates=candidates,
+                    )
                 logger.info("stored %d pending memory candidate(s) for %s", inserted, speaker)
             except Exception:
-                logger.exception("memory extraction failed for message %d", message_id)
+                logger.exception("memory extraction failed for message %d", latest.message_id)
+
+    async def fire_window(items: tuple[WindowMessage, ...]) -> None:
+        try:
+            await respond(items)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            latest = items[-1]
+            logger.exception(
+                "failed to respond to listening window ending at message %d",
+                latest.message_id,
+            )
+
+    windows = ListeningWindowManager[WindowMessage](
+        bottle.listen_window_seconds, fire_window
+    )
+
+    async def on_message(message: IncomingIRCMessage) -> None:
+        async with database_lock:
+            user_id = await resolve_user(db, network=bottle.irc.network, identity=message)
+            incoming = IRCMessage(
+                network=bottle.irc.network, channel=message.target, speaker=message.nick,
+                body=message.body, bot_id=bottle.id, user_id=user_id,
+            )
+            message_id = await log_message(db, incoming)
+            module_context = ModuleContext(
+                db=db, bottle=bottle, message=message, user_id=user_id,
+                source_message_id=message_id,
+            )
+            await modules.on_message(module_context)
+        key = (message.target.casefold(), user_id)
+        direct_message = message.target.casefold() == bottle.irc.nick.casefold()
+        addressed = direct_message or bottle.irc.nick.casefold() in message.body.casefold()
+        if windows.contains(key) or addressed:
+            windows.add(
+                key, WindowMessage(message=message, user_id=user_id, message_id=message_id)
+            )
 
     client = IRCClient(bottle.irc, on_message)
-    await client.run()
+    try:
+        await client.run()
+    finally:
+        await windows.close()
 
 
 async def run_bottle(db: aiosqlite.Connection, bottle: Bottle) -> None:

@@ -87,6 +87,16 @@ Schedule `dream-all` with cron or a systemd timer for nightly operation. Each
 summary records its exact period in SQLite, invokes enabled modules' `nightly`
 hooks, and becomes retrieval context for later replies.
 
+Open the read-only operational dashboard with:
+
+```bash
+bottled-ghosts tui
+```
+
+The dashboard shows configured Bottles, memory extraction state, pending
+sediment, enabled modules, last activity, and recent messages. Use the arrow
+keys to select a Bottle, `r` to refresh, and `q` to quit.
+
 To add or replace SASL credentials on an existing Bottle:
 
 ```bash

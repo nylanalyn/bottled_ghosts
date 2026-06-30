@@ -7,7 +7,7 @@ name = "bottled-ghosts"
 version = "0.1.0"
 description = "A local-first IRC character engine"
 requires-python = ">=3.12"
-dependencies = ["aiosqlite>=0.20", "httpx>=0.27", "pydantic>=2.7"]
+dependencies = ["aiosqlite>=0.20", "httpx>=0.27", "pydantic>=2.7", "textual>=3.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
@@ -16,7 +16,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 bottled-ghosts = "cellar.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cellar", "modules"]
+packages = ["cellar", "modules", "tui"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

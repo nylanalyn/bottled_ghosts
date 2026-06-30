@@ -83,6 +83,10 @@ async def dashboard_audit_events(
                           COALESCE(old_status || ' -> ' || new_status, '') ||
                           CASE WHEN new_text IS NOT NULL
                                THEN ' ' || COALESCE(old_text, '') || ' -> ' || new_text
+                               ELSE '' END ||
+                          CASE WHEN old_expires_at IS NOT NULL OR new_expires_at IS NOT NULL
+                               THEN ' expiry: ' || COALESCE(old_expires_at, 'never') ||
+                                    ' -> ' || COALESCE(new_expires_at, 'never')
                                ELSE '' END
                       ) AS details
                FROM audit_events

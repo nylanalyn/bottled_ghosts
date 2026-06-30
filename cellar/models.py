@@ -107,6 +107,7 @@ class UserMemory(BaseModel):
     memory_text: str
     memory_type: MemoryType
     confidence: float
+    expires_at: str | None = None
 
 
 class UserMemoryView(UserMemory):

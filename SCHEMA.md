@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 009.
+The schema below reflects migration 010.
 
 ## schema_migrations
 
@@ -52,13 +52,13 @@ Allowed `memory_type` values are `preference`, `project`, `relationship`, `ident
 
 ## user_memories
 
-Stores operator-approved long-term memory. Columns: `id INTEGER PRIMARY KEY`, `user_id TEXT NOT NULL`, `source_candidate_id INTEGER UNIQUE`, `memory_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_used_at TEXT`.
+Stores operator-approved long-term memory. Columns: `id INTEGER PRIMARY KEY`, `user_id TEXT NOT NULL`, `source_candidate_id INTEGER UNIQUE`, `memory_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_used_at TEXT`, `expires_at TEXT`.
 
-Foreign keys: `user_id` references `users(id)` with cascading deletion; `source_candidate_id` references `memory_candidates(id)` with deletion setting it to null. Index: `user_memories_user_idx(user_id, memory_type, id DESC)`. Memory types use the same five-value constraint as sediment.
+Foreign keys: `user_id` references `users(id)` with cascading deletion; `source_candidate_id` references `memory_candidates(id)` with deletion setting it to null. Indexes: `user_memories_user_idx(user_id, memory_type, id DESC)` and partial `user_memories_expiry_idx(expires_at)`. Memory types use the same five-value constraint as sediment. Expired rows remain available for inspection but are excluded from prompt retrieval.
 
 ## audit_events
 
-Append-only operator mutation history. Columns: `id INTEGER PRIMARY KEY`, `action TEXT NOT NULL`, `entity_type TEXT NOT NULL`, `entity_id INTEGER NOT NULL`, `related_entity_id INTEGER`, `actor TEXT NOT NULL`, `old_text TEXT`, `new_text TEXT`, `old_type TEXT`, `new_type TEXT`, `old_confidence REAL`, `new_confidence REAL`, `old_status TEXT`, `new_status TEXT`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`.
+Append-only operator mutation history. Columns: `id INTEGER PRIMARY KEY`, `action TEXT NOT NULL`, `entity_type TEXT NOT NULL`, `entity_id INTEGER NOT NULL`, `related_entity_id INTEGER`, `actor TEXT NOT NULL`, `old_text TEXT`, `new_text TEXT`, `old_type TEXT`, `new_type TEXT`, `old_confidence REAL`, `new_confidence REAL`, `old_status TEXT`, `new_status TEXT`, `old_expires_at TEXT`, `new_expires_at TEXT`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`.
 
 Allowed actions are `approve`, `reject`, and `edit`. Allowed entity types are `memory_candidate` and `user_memory`. Index: `audit_events_entity_idx(entity_type, entity_id, id DESC)`. The `audit_events_no_update` and `audit_events_no_delete` triggers enforce append-only storage.
 
@@ -85,3 +85,4 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 - 007: Add persistent Bottle dream summaries with explicit period boundaries.
 - 008: Add append-only, secret-free Bottle configuration audit events.
 - 009: Add the per-Bottle listening-window duration.
+- 010: Add explicit temporary-memory expiry and expiry audit fields.

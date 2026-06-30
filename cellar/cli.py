@@ -109,8 +109,9 @@ async def async_main(args: argparse.Namespace) -> None:
             print(f"Rejected candidate {args.candidate_id}")
         elif args.command == "memories":
             for user_memory in await list_user_memories(db, user_id=args.user_id):
+                expiry = f"\texpires:{user_memory.expires_at}" if user_memory.expires_at else ""
                 print(f"{user_memory.id}\t{user_memory.memory_type}\t"
-                      f"{user_memory.confidence:.2f}\t{user_memory.memory_text}")
+                      f"{user_memory.confidence:.2f}{expiry}\t{user_memory.memory_text}")
         elif args.command == "memory-edit":
             await edit_user_memory(
                 db, memory_id=args.memory_id, text=args.text,

@@ -112,14 +112,61 @@ async def test_pending_candidate_keeps_source_and_deduplicates(tmp_path) -> None
         rejected = (await list_memory_candidates(db))[0]
         await reject_memory_candidate(db, candidate_id=rejected.id, actor="test-operator")
 
-        audit = await (await db.execute(
-            "SELECT action, actor FROM audit_events ORDER BY id"
-        )).fetchall()
-        assert [tuple(row) for row in audit] == [
+        third_message_id = await log_message(
+            db,
+            IRCMessage(network="local", channel="#test", speaker="alice",
+                       body="I am busy today", bot_id=bottle_id, user_id=user_id),
+        )
+        await store_memory_candidates(
+            db, user_id=user_id, source_message_id=third_message_id,
+            candidates=[ExtractedMemory(
+                text="Busy today", type="temporary_state", confidence=0.8,
+            )],
+        )
+        temporary_candidate = (await list_memory_candidates(db))[0]
+        temporary_memory_id = await approve_memory_candidate(
+            db, candidate_id=temporary_candidate.id, actor="test-operator"
+        )
+        temporary_memory = next(
+            memory for memory in await list_user_memories(db, user_id=user_id)
+            if memory.id == temporary_memory_id
+        )
+        assert temporary_memory.expires_at is not None
+        assert "temporary_state: Busy today" in await approved_memory_texts(
+            db, user_id=user_id
+        )
+
+        await db.execute(
+            "UPDATE user_memories SET expires_at = datetime('now', '-1 second') WHERE id = ?",
+            (temporary_memory_id,),
+        )
+        await db.commit()
+        assert "temporary_state: Busy today" not in await approved_memory_texts(
+            db, user_id=user_id
+        )
+        await edit_user_memory(
+            db, memory_id=temporary_memory_id, memory_type="relationship",
+            actor="test-operator",
+        )
+        revived = next(
+            memory for memory in await list_user_memories(db, user_id=user_id)
+            if memory.id == temporary_memory_id
+        )
+        assert revived.expires_at is None
+        assert "relationship: Busy today" in await approved_memory_texts(db, user_id=user_id)
+
+        audit = list(await (await db.execute(
+            "SELECT action, actor, new_expires_at FROM audit_events ORDER BY id"
+        )).fetchall())
+        assert [(row["action"], row["actor"]) for row in audit] == [
             ("approve", "test-operator"),
             ("edit", "test-operator"),
             ("reject", "test-operator"),
+            ("approve", "test-operator"),
+            ("edit", "test-operator"),
         ]
+        assert audit[3]["new_expires_at"] is not None
+        assert audit[4]["new_expires_at"] is None
         with pytest.raises(aiosqlite.IntegrityError, match="append-only"):
             await db.execute("DELETE FROM audit_events")
         await db.rollback()

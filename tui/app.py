@@ -186,7 +186,7 @@ class BottledGhostsApp(App[None]):
         memory_table = self.query_one("#memories", DataTable)
         memory_table.cursor_type = "row"
         memory_table.zebra_stripes = True
-        memory_table.add_columns("ID", "User", "Type", "Confidence", "Memory")
+        memory_table.add_columns("ID", "User", "Type", "Confidence", "Expires", "Memory")
         module_table = self.query_one("#module-list", DataTable)
         module_table.cursor_type = "row"
         module_table.zebra_stripes = True
@@ -340,7 +340,8 @@ class BottledGhostsApp(App[None]):
         for memory in memories:
             table.add_row(
                 str(memory.id), memory.canonical_name, memory.memory_type,
-                f"{memory.confidence:.2f}", memory.memory_text, key=str(memory.id),
+                f"{memory.confidence:.2f}", memory.expires_at or "never",
+                memory.memory_text, key=str(memory.id),
             )
         self.selected_memory_id = memories[0].id if memories else None
         if memories:
@@ -358,6 +359,7 @@ class BottledGhostsApp(App[None]):
         source = memory.source_body or "No source message available."
         self.query_one("#memory-detail", Static).update(Text(
             f"Memory {memory.id} for {memory.canonical_name} ({memory.user_id})\n"
+            f"Expires: {memory.expires_at or 'never'}\n"
             f"Source candidate: {memory.source_candidate_id or 'none'} — {source}"
         ))
         self.query_one("#memory-text", Input).value = memory.memory_text

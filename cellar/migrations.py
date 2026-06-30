@@ -256,9 +256,21 @@ async def migration_009(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_010(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        ALTER TABLE user_memories ADD COLUMN expires_at TEXT;
+        ALTER TABLE audit_events ADD COLUMN old_expires_at TEXT;
+        ALTER TABLE audit_events ADD COLUMN new_expires_at TEXT;
+        CREATE INDEX user_memories_expiry_idx
+            ON user_memories(expires_at) WHERE expires_at IS NOT NULL;
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
-    migration_006, migration_007, migration_008, migration_009,
+    migration_006, migration_007, migration_008, migration_009, migration_010,
 )
 
 

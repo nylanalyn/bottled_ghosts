@@ -460,7 +460,8 @@ Input:
 
 Output:
 
-Temporary state only.
+Temporary state only. Approved `temporary_state` memories expire after 24 hours.
+Expired memories remain inspectable and auditable but are not retrieved into prompts.
 
 ---
 

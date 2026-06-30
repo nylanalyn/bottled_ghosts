@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 007.
+The schema below reflects migration 008.
 
 ## schema_migrations
 
@@ -70,6 +70,10 @@ Stores per-Bottle module enablement and future module settings. Columns: `bot_id
 
 Stores Bottle dream summaries with explicit coverage periods. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `period_start TEXT NOT NULL`, `period_end TEXT NOT NULL`, `summary TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `summaries_bot_period_idx(bot_id, period_end DESC, id DESC)`.
 
+## configuration_events
+
+Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `actor TEXT NOT NULL`, `changed_fields TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Secret values are never recorded. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `configuration_events_bot_idx(bot_id, id DESC)`. The `configuration_events_no_update` and `configuration_events_no_delete` triggers enforce append-only storage.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -79,3 +83,4 @@ Stores Bottle dream summaries with explicit coverage periods. Columns: `id INTEG
 - 005: Add approved user memories and append-only review/edit audit events.
 - 006: Add canonical per-Bottle module enablement and settings.
 - 007: Add persistent Bottle dream summaries with explicit period boundaries.
+- 008: Add append-only, secret-free Bottle configuration audit events.

@@ -1,3 +1,4 @@
+import aiosqlite
 import pytest
 from textual.widgets import Checkbox, DataTable, Input, Select
 
@@ -83,6 +84,10 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
         await app.action_search_logs()
         await pilot.pause()
         assert app.query_one("#log-results", DataTable).row_count == 1
+        app.query_one("#config-name", Input).value = "mossy"
+        app.query_one("#config-model", Input).value = "new-model"
+        await app.action_save_configuration()
+        await pilot.pause()
 
     db = await open_database(database)
     try:
@@ -96,7 +101,14 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
             "SELECT memory_text, confidence FROM user_memories"
         )).fetchone()
         bottle_state = await (await db.execute(
-            "SELECT enabled, extract_memories FROM bots WHERE id = ?", (bottle_id,)
+            "SELECT enabled, extract_memories, name FROM bots WHERE id = ?", (bottle_id,)
+        )).fetchone()
+        model = await (await db.execute(
+            """SELECT l.model FROM llm_profiles l JOIN bots b ON b.llm_profile_id = l.id
+               WHERE b.id = ?""", (bottle_id,)
+        )).fetchone()
+        configuration_event = await (await db.execute(
+            "SELECT actor, changed_fields FROM configuration_events"
         )).fetchone()
         assert tuple(candidate) == ("approved",)
         assert [tuple(row) for row in audit] == [
@@ -104,7 +116,12 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
             ("edit", "tui-test"),
         ]
         assert tuple(memory) == ("Prefers green tea", 0.8)
-        assert tuple(bottle_state) == (0, 1)
+        assert tuple(bottle_state) == (0, 1, "mossy")
+        assert tuple(model) == ("new-model",)
+        assert tuple(configuration_event) == ("tui-test", "model,name")
         assert await module_states(db, bottle_id=bottle_id) == {"channel_context": True}
+        with pytest.raises(aiosqlite.IntegrityError, match="append-only"):
+            await db.execute("DELETE FROM configuration_events")
+        await db.rollback()
     finally:
         await db.close()

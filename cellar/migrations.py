@@ -225,9 +225,33 @@ async def migration_007(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_008(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE configuration_events (
+            id INTEGER PRIMARY KEY,
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            actor TEXT NOT NULL,
+            changed_fields TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX configuration_events_bot_idx
+            ON configuration_events(bot_id, id DESC);
+        CREATE TRIGGER configuration_events_no_update
+        BEFORE UPDATE ON configuration_events BEGIN
+            SELECT RAISE(ABORT, 'configuration events are append-only');
+        END;
+        CREATE TRIGGER configuration_events_no_delete
+        BEFORE DELETE ON configuration_events BEGIN
+            SELECT RAISE(ABORT, 'configuration events are append-only');
+        END;
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
-    migration_006, migration_007,
+    migration_006, migration_007, migration_008,
 )
 
 

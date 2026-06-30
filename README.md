@@ -108,6 +108,10 @@ stopped implicitly; reconnect a Bottle to apply module changes.
 The Log Search tab queries the SQLite FTS index. Press `/` to focus its query
 field, optionally scope results to the Bottle selected on the dashboard, and
 select a result to inspect the complete stored message.
+The Configuration tab edits the selected Bottle's public identity, IRC/LLM
+endpoints, channels, model settings, and enforced output limits. Press `F5` or
+the save button to persist one audited transaction. Passwords and API keys are
+never displayed or overwritten by this form; reconnect to apply changes.
 
 To add or replace SASL credentials on an existing Bottle:
 

@@ -4,6 +4,7 @@ import aiosqlite
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import VerticalScroll
 from textual.widgets import (
     Button,
     Checkbox,
@@ -11,6 +12,7 @@ from textual.widgets import (
     Footer,
     Header,
     Input,
+    Label,
     RichLog,
     Select,
     Static,
@@ -25,6 +27,7 @@ from cellar.memory_store import (
     list_memory_candidates,
     reject_memory_candidate,
 )
+from cellar.config_store import BottleSettings, load_bottle_settings, save_bottle_settings
 from cellar.module_loader import available_modules
 from cellar.module_store import module_states, set_module_enabled
 from cellar.models import LogSearchResult
@@ -58,6 +61,9 @@ class BottledGhostsApp(App[None]):
     #run-log-search { margin: 1; width: 18; }
     #log-results { height: 45%; border: solid $accent; }
     #log-result-detail { height: 1fr; border: solid $secondary; padding: 1 2; }
+    #configuration-scroll { height: 1fr; padding: 0 2; }
+    #configuration-scroll Label { margin-top: 1; }
+    #save-configuration { margin: 1 0 2 0; width: 26; }
     """
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -69,6 +75,7 @@ class BottledGhostsApp(App[None]):
         Binding("f3", "toggle_extraction", "Toggle extraction"),
         Binding("f4", "toggle_module", "Toggle module"),
         Binding("slash", "focus_log_search", "Search logs", key_display="/"),
+        Binding("f5", "save_configuration", "Save configuration"),
     ]
 
     def __init__(self, database: Path, *, actor: str = "operator") -> None:
@@ -115,6 +122,33 @@ class BottledGhostsApp(App[None]):
                 yield Button("Search logs", id="run-log-search", variant="primary")
                 yield DataTable(id="log-results")
                 yield Static("Enter a query to search indexed messages.", id="log-result-detail")
+            with TabPane("Configuration", id="configuration-tab"):
+                with VerticalScroll(id="configuration-scroll"):
+                    yield Static("Select a Bottle on the Bottles tab. Secrets are not displayed.",
+                                 id="configuration-title")
+                    for label, field_id, input_type in (
+                        ("Bottle name", "config-name", "text"),
+                        ("Soul prompt path", "config-soul", "text"),
+                        ("IRC network name", "config-network", "text"),
+                        ("IRC server host", "config-host", "text"),
+                        ("IRC server port", "config-port", "integer"),
+                        ("IRC nickname", "config-nick", "text"),
+                        ("IRC username", "config-username", "text"),
+                        ("IRC real name", "config-realname", "text"),
+                        ("IRC channels (comma-separated)", "config-channels", "text"),
+                        ("LLM chat-completions endpoint", "config-endpoint", "text"),
+                        ("LLM model", "config-model", "text"),
+                        ("LLM temperature", "config-temperature", "number"),
+                        ("LLM maximum tokens", "config-max-tokens", "integer"),
+                        ("Maximum IRC reply lines", "config-max-lines", "integer"),
+                        ("Maximum characters per line", "config-max-chars", "integer"),
+                        ("Cooldown seconds", "config-cooldown", "number"),
+                    ):
+                        yield Label(label)
+                        yield Input(id=field_id, type=input_type)
+                    yield Checkbox("Use TLS", id="config-tls")
+                    yield Button("Save audited configuration", id="save-configuration",
+                                 variant="primary")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -158,6 +192,7 @@ class BottledGhostsApp(App[None]):
         await self.refresh_sediment()
         await self.refresh_memories()
         await self.refresh_modules()
+        await self.refresh_configuration()
 
     async def refresh_dashboard(self) -> None:
         if self.db is None:
@@ -187,6 +222,7 @@ class BottledGhostsApp(App[None]):
             self.selected_bottle_id = row_id
             await self.show_logs(row_id)
             await self.refresh_modules()
+            await self.refresh_configuration()
         elif event.data_table.id == "sediment":
             row_id = int(str(event.row_key.value))
             self.selected_candidate_id = row_id
@@ -309,6 +345,8 @@ class BottledGhostsApp(App[None]):
             await self.action_save_memory()
         elif event.button.id == "run-log-search":
             await self.action_search_logs()
+        elif event.button.id == "save-configuration":
+            await self.action_save_configuration()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "log-search-query":
@@ -428,6 +466,67 @@ class BottledGhostsApp(App[None]):
             f"{result.timestamp} {result.network} {result.channel} <{result.speaker}>\n\n"
             f"{result.body}"
         ))
+
+    async def refresh_configuration(self) -> None:
+        if self.db is None or self.selected_bottle_id is None:
+            return
+        settings = await load_bottle_settings(self.db, bottle_id=self.selected_bottle_id)
+        values = {
+            "config-name": settings.name,
+            "config-soul": str(settings.soul_prompt_path),
+            "config-network": settings.network,
+            "config-host": settings.host,
+            "config-port": str(settings.port),
+            "config-nick": settings.nick,
+            "config-username": settings.username,
+            "config-realname": settings.realname,
+            "config-channels": ",".join(settings.channels),
+            "config-endpoint": settings.endpoint,
+            "config-model": settings.model,
+            "config-temperature": str(settings.temperature),
+            "config-max-tokens": str(settings.max_tokens),
+            "config-max-lines": str(settings.max_lines),
+            "config-max-chars": str(settings.max_chars),
+            "config-cooldown": str(settings.cooldown_seconds),
+        }
+        for field_id, value in values.items():
+            self.query_one(f"#{field_id}", Input).value = value
+        self.query_one("#config-tls", Checkbox).value = settings.tls
+        self.query_one("#configuration-title", Static).update(
+            f"Editing Bottle {settings.id}. Passwords and API keys remain unchanged."
+        )
+
+    async def action_save_configuration(self) -> None:
+        if self.db is None or self.selected_bottle_id is None:
+            self.notify("No Bottle selected", severity="warning")
+            return
+        value = lambda field_id: self.query_one(f"#{field_id}", Input).value.strip()
+        try:
+            settings = BottleSettings(
+                id=self.selected_bottle_id,
+                name=value("config-name"), soul_prompt_path=value("config-soul"),
+                network=value("config-network"), host=value("config-host"),
+                port=int(value("config-port")),
+                tls=self.query_one("#config-tls", Checkbox).value,
+                nick=value("config-nick"), username=value("config-username"),
+                realname=value("config-realname"),
+                channels=[item.strip() for item in value("config-channels").split(",")
+                          if item.strip()],
+                endpoint=value("config-endpoint"), model=value("config-model"),
+                temperature=float(value("config-temperature")),
+                max_tokens=int(value("config-max-tokens")),
+                max_lines=int(value("config-max-lines")),
+                max_chars=int(value("config-max-chars")),
+                cooldown_seconds=float(value("config-cooldown")),
+            )
+            changed = await save_bottle_settings(self.db, settings=settings, actor=self.actor)
+        except ValueError as error:
+            self.notify(str(error), severity="error")
+            return
+        self.notify("Configuration saved; reconnect to apply" if changed
+                    else "Configuration is unchanged")
+        await self.refresh_dashboard()
+        await self.refresh_configuration()
 
 
 def run_tui(database: Path, *, actor: str = "operator") -> None:

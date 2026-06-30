@@ -4,13 +4,11 @@ The v0.1 runtime connects one configured Bottle to IRC, logs messages to SQLite,
 calls an OpenAI-compatible chat endpoint when its nick is mentioned, sanitizes the
 response, and sends it with hard output limits.
 
-Install and test inside a virtual environment:
+Install the pinned Python version and development environment with UV:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-pytest
+uv sync --extra dev
+uv run pytest
 ```
 
 Create a Markdown soul prompt, then configure and run a Bottle:

@@ -172,6 +172,43 @@ Fields:
 * soul_prompt_path
 * llm_profile_id
 * irc_profile_id
+* max_lines
+* max_chars
+* cooldown_seconds
+* listen_window_seconds
+* extract_memories
+
+### irc_profiles
+
+Stores IRC connection and authentication configuration referenced by `bots`.
+
+Fields:
+
+* id
+* network
+* host
+* port
+* tls
+* nick
+* username
+* realname
+* channels
+* password
+* sasl_username
+* sasl_password
+
+### llm_profiles
+
+Stores OpenAI-compatible model configuration referenced by `bots`.
+
+Fields:
+
+* id
+* endpoint
+* model
+* api_key
+* temperature
+* max_tokens
 
 ### bot_modules
 
@@ -271,6 +308,18 @@ Fields:
 * summary
 * created_at
 
+### audit_events
+
+Append-only history of sediment approval, rejection, and memory edits.
+
+### configuration_events
+
+Append-only, secret-free history of Bottle configuration changes.
+
+### schema_migrations
+
+Records each applied migration version and timestamp.
+
 ---
 
 # Message Flow
@@ -280,13 +329,43 @@ Incoming message:
 1. IRC receives message
 2. Store raw message in SQLite
 3. Resolve user UUID
-4. Run enabled modules
-5. Retrieve relevant memory
-6. Build prompt
-7. Call LLM
-8. Sanitize output
-9. Send reply
-10. Extract candidate memories
+4. Run `on_message` module hooks
+5. If not addressed to this bot: stop here
+6. Start or extend the listening window for this (channel, nick) pair
+7. When the window expires: retrieve relevant memory
+8. Run `before_prompt` module hooks
+9. Build prompt from accumulated window messages
+10. Call LLM
+11. Sanitize output
+12. Run `after_response` module hooks
+13. Send reply
+14. Extract candidate memories
+
+---
+
+# Listening Window
+
+The bot does not reply to each addressed message the instant it arrives.
+
+When an addressed message is received, a per-(channel, nick) timer starts.
+Each additional message from the same nick in the same channel resets the timer.
+When the timer expires with no new input, all accumulated messages are joined in
+order and treated as a single turn for prompt construction and LLM generation.
+
+This means a user can send a multi-line thought without getting a reply after
+each line.
+
+Rules:
+
+* Non-addressed messages from other nicks are logged normally and do not start a window.
+* Only one response is generated per window expiry, regardless of how many messages accumulated.
+* `on_message` fires for every incoming message.
+* `before_prompt` and `after_response` fire once per window, when a reply is generated.
+* If no messages arrive for `listen_window_seconds`, the window fires.
+
+`listen_window_seconds` is a per-Bottle configuration field.
+
+Default: 8 seconds.
 
 ---
 
@@ -397,6 +476,9 @@ Tasks:
 * update bot state
 
 Dreams are written in bot voice.
+
+Dream jobs are explicit commands scheduled by the operator through cron, systemd,
+or another external scheduler. The runtime does not start hidden background jobs.
 
 ---
 

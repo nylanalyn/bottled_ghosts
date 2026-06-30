@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import aiosqlite
@@ -35,6 +36,10 @@ async def load_bottle(db: aiosqlite.Connection, bottle_id: int) -> Bottle:
     row = await cursor.fetchone()
     if row is None:
         raise LookupError(f"enabled bottle {bottle_id} does not exist")
+    return _bottle_from_row(row)
+
+
+def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
     return Bottle(
         id=row["id"], name=row["name"], soul_prompt_path=Path(row["soul_prompt_path"]),
         max_lines=row["max_lines"], max_chars=row["max_chars"],
@@ -66,8 +71,16 @@ async def list_bottles(db: aiosqlite.Connection) -> list[BottleSummary]:
 
 
 async def load_enabled_bottles(db: aiosqlite.Connection) -> list[Bottle]:
-    summaries = await list_bottles(db)
-    return [await load_bottle(db, summary.id) for summary in summaries if summary.enabled]
+    cursor = await db.execute(
+        """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
+                  i.realname, i.channels, i.password, i.sasl_username,
+                  i.sasl_password, l.endpoint, l.model,
+                  l.api_key, l.temperature, l.max_tokens
+           FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
+           JOIN llm_profiles l ON l.id = b.llm_profile_id
+           WHERE b.enabled = 1 ORDER BY b.id"""
+    )
+    return [_bottle_from_row(row) for row in await cursor.fetchall()]
 
 
 async def create_bottle(
@@ -233,8 +246,7 @@ async def recent_messages(
 
 def exact_search_query(text: str) -> str | None:
     words = []
-    for raw in text.split():
-        word = "".join(character for character in raw if character.isalnum() or character == "_")
+    for word in re.findall(r"[\w]+", text, flags=re.UNICODE):
         if len(word) >= 3 and word.casefold() not in {item.casefold() for item in words}:
             words.append(word)
         if len(words) == 8:

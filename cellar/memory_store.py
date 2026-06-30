@@ -51,6 +51,20 @@ async def list_memory_candidates(
     ]
 
 
+async def get_memory_candidate(
+    db: aiosqlite.Connection, *, candidate_id: int
+) -> MemoryCandidateView | None:
+    cursor = await db.execute(
+        """SELECT c.*, u.canonical_name, m.body AS source_body
+           FROM memory_candidates c
+           JOIN users u ON u.id = c.user_id
+           JOIN messages m ON m.id = c.source_message_id
+           WHERE c.id = ?""", (candidate_id,),
+    )
+    row = await cursor.fetchone()
+    return MemoryCandidateView(**dict(row)) if row is not None else None
+
+
 async def approve_memory_candidate(
     db: aiosqlite.Connection, *, candidate_id: int, actor: str = "operator"
 ) -> int:
@@ -143,6 +157,22 @@ async def list_all_user_memories(db: aiosqlite.Connection) -> list[UserMemoryVie
            ORDER BY u.canonical_name COLLATE NOCASE, um.id"""
     )
     return [UserMemoryView(**dict(row)) for row in await cursor.fetchall()]
+
+
+async def get_user_memory(
+    db: aiosqlite.Connection, *, memory_id: int
+) -> UserMemoryView | None:
+    cursor = await db.execute(
+        """SELECT um.id, um.user_id, u.canonical_name, um.source_candidate_id,
+                  m.body AS source_body, um.memory_text, um.memory_type, um.confidence
+           FROM user_memories um
+           JOIN users u ON u.id = um.user_id
+           LEFT JOIN memory_candidates c ON c.id = um.source_candidate_id
+           LEFT JOIN messages m ON m.id = c.source_message_id
+           WHERE um.id = ?""", (memory_id,),
+    )
+    row = await cursor.fetchone()
+    return UserMemoryView(**dict(row)) if row is not None else None
 
 
 async def edit_user_memory(

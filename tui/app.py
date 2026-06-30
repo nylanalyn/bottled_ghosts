@@ -23,6 +23,8 @@ from textual.widgets import (
 from cellar.memory_store import (
     approve_memory_candidate,
     edit_user_memory,
+    get_memory_candidate,
+    get_user_memory,
     list_all_user_memories,
     list_memory_candidates,
     reject_memory_candidate,
@@ -292,8 +294,7 @@ class BottledGhostsApp(App[None]):
     async def show_candidate(self, candidate_id: int) -> None:
         if self.db is None:
             return
-        candidates = await list_memory_candidates(self.db)
-        candidate = next((item for item in candidates if item.id == candidate_id), None)
+        candidate = await get_memory_candidate(self.db, candidate_id=candidate_id)
         if candidate is None:
             return
         self.query_one("#candidate-detail", Static).update(Text(
@@ -346,8 +347,7 @@ class BottledGhostsApp(App[None]):
     async def show_memory(self, memory_id: int) -> None:
         if self.db is None:
             return
-        memories = await list_all_user_memories(self.db)
-        memory = next((item for item in memories if item.id == memory_id), None)
+        memory = await get_user_memory(self.db, memory_id=memory_id)
         if memory is None:
             return
         source = memory.source_body or "No source message available."

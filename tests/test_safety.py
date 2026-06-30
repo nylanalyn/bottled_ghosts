@@ -12,3 +12,8 @@ def test_sanitize_drops_fenced_content() -> None:
 
 def test_strip_private_reasoning_preserves_summary_layout() -> None:
     assert strip_private_reasoning("<think>private</think>\nUseful\nsummary") == "Useful\nsummary"
+
+
+def test_strip_private_reasoning_drops_unclosed_thought_and_everything_after_it() -> None:
+    assert strip_private_reasoning("Public answer\n<think>private reasoning") == "Public answer"
+    assert strip_private_reasoning("<think>private reasoning") == ""

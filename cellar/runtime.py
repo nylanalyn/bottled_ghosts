@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 
 import aiosqlite
 
@@ -85,12 +86,15 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
 async def run_bottle(db: aiosqlite.Connection, bottle: Bottle) -> None:
     delay = 1.0
     while True:
+        started_at = time.monotonic()
         try:
             await run_bottle_once(db, bottle)
         except asyncio.CancelledError:
             logger.info("stopping Bottle %d (%s)", bottle.id, bottle.name)
             raise
         except Exception:
+            if time.monotonic() - started_at >= 30.0:
+                delay = 1.0
             logger.exception("Bottle %d (%s) disconnected; retrying in %.0fs",
                              bottle.id, bottle.name, delay)
             await asyncio.sleep(delay)

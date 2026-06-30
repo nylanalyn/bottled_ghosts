@@ -69,6 +69,13 @@ async def test_migration_configuration_and_logging(tmp_path) -> None:
             db, bot_id=1, network="local", channel="#test", text="telescope",
             exclude_message_id=searchable_id,
         ) == []
+        hyphenated_id = await log_message(
+            db, IRCMessage(network="local", channel="#test", speaker="alice",
+                           body="this is well-known behavior", bot_id=1)
+        )
+        assert [result.id for result in await search_logs(db, text="well-known")] == [
+            hyphenated_id
+        ]
         results = await search_logs(db, text="brass telescope", bot_id=bottle_id)
         assert [(result.id, result.speaker) for result in results] == [
             (searchable_id, "alice")

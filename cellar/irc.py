@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 def parse_privmsg(line: str) -> IncomingIRCMessage | None:
     tags: dict[str, str | None] = {}
     if line.startswith("@"):
+        if " " not in line:
+            return None
         raw_tags, line = line.split(" ", 1)
         for item in raw_tags[1:].split(";"):
             key, separator, value = item.partition("=")
@@ -45,6 +47,8 @@ class IRCClient:
         self.handler = handler
         self.writer: asyncio.StreamWriter | None = None
         self.capabilities: set[str] = set()
+        self.pending_capabilities: set[str] = set()
+        self.sasl_authenticating = False
 
     async def send_raw(self, line: str) -> None:
         if self.writer is None:
@@ -90,28 +94,31 @@ class IRCClient:
                     if self.profile.sasl_username:
                         if "sasl" not in self.capabilities:
                             raise RuntimeError("IRC server does not advertise SASL")
-                    requested = []
                     if self.profile.sasl_username:
                         logger.info("requesting SASL PLAIN authentication")
-                        requested.append("sasl")
+                        self.pending_capabilities.add("sasl")
+                        await self.send_raw("CAP REQ :sasl")
                     if "account-tag" in self.capabilities:
-                        requested.append("account-tag")
-                    if requested:
-                        await self.send_raw(f"CAP REQ :{' '.join(requested)}")
-                    else:
+                        self.pending_capabilities.add("account-tag")
+                        await self.send_raw("CAP REQ :account-tag")
+                    if not self.pending_capabilities:
                         await self.send_raw("CAP END")
                     continue
                 if " CAP " in line and " NAK " in line:
                     rejected = line.rsplit(" :", 1)[-1].split()
+                    self.pending_capabilities.difference_update(rejected)
                     if self.profile.sasl_username and "sasl" in rejected:
                         raise RuntimeError("IRC server rejected the SASL capability request")
-                    await self.send_raw("CAP END")
+                    if not self.pending_capabilities and not self.sasl_authenticating:
+                        await self.send_raw("CAP END")
                     continue
                 if " CAP " in line and " ACK " in line:
                     acknowledged = line.rsplit(" :", 1)[-1].split()
+                    self.pending_capabilities.difference_update(acknowledged)
                     if "sasl" in acknowledged:
+                        self.sasl_authenticating = True
                         await self.send_raw("AUTHENTICATE PLAIN")
-                    else:
+                    elif not self.pending_capabilities and not self.sasl_authenticating:
                         await self.send_raw("CAP END")
                     continue
                 if line == "AUTHENTICATE +":
@@ -121,6 +128,7 @@ class IRCClient:
                 numeric = parts[1] if len(parts) > 1 and parts[1].isdigit() else None
                 if numeric == "903":
                     logger.info("SASL authentication succeeded")
+                    self.sasl_authenticating = False
                     await self.send_raw("CAP END")
                     continue
                 if numeric in {"904", "905", "906", "907"}:

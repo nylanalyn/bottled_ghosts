@@ -8,6 +8,9 @@ TAG_RE = re.compile(r"</?think\b[^>]*>", re.IGNORECASE)
 
 def strip_private_reasoning(text: str) -> str:
     text = THINK_RE.sub("", text)
+    unclosed = re.search(r"<think\b[^>]*>", text, re.IGNORECASE)
+    if unclosed is not None:
+        text = text[:unclosed.start()]
     return TAG_RE.sub("", text).strip()
 
 

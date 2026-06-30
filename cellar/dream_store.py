@@ -9,6 +9,8 @@ async def dream_window(
     row = await (await db.execute(
         "SELECT datetime('now', ?), CURRENT_TIMESTAMP", (f"-{hours} hours",)
     )).fetchone()
+    if row is None:
+        raise RuntimeError("SQLite did not return a dream window")
     return str(row[0]), str(row[1])
 
 
@@ -28,7 +30,10 @@ async def messages_for_dream(
            ) ORDER BY id""",
         (bot_id, period_start, period_end, limit),
     )
-    return [tuple(str(value) for value in row) for row in await cursor.fetchall()]
+    return [
+        (str(row[0]), str(row[1]), str(row[2]), str(row[3]))
+        for row in await cursor.fetchall()
+    ]
 
 
 async def store_dream(
@@ -49,6 +54,8 @@ async def store_dream(
     row = await (await db.execute(
         "SELECT * FROM summaries WHERE id = ?", (cursor.lastrowid,)
     )).fetchone()
+    if row is None:
+        raise RuntimeError("stored dream could not be reloaded")
     return DreamSummary(**dict(row))
 
 

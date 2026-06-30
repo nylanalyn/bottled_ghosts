@@ -77,6 +77,7 @@ async def test_pending_candidate_keeps_source_and_deduplicates(tmp_path) -> None
             """SELECT user_id, source_message_id, memory_type, status
                FROM memory_candidates"""
         )).fetchone()
+        assert row is not None
         assert tuple(row) == (user_id, message_id, "preference", "pending")
 
         pending = await list_memory_candidates(db)

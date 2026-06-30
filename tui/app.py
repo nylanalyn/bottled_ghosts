@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal, cast
 
 import aiosqlite
 from rich.text import Text
@@ -155,7 +156,10 @@ class BottledGhostsApp(App[None]):
                         ("Cooldown seconds", "config-cooldown", "number"),
                     ):
                         yield Label(label)
-                        yield Input(id=field_id, type=input_type)
+                        yield Input(
+                            id=field_id,
+                            type=cast(Literal["integer", "number", "text"], input_type),
+                        )
                     yield Checkbox("Use TLS", id="config-tls")
                     yield Button("New Bottle", id="new-configuration")
                     yield Button("Save audited configuration", id="save-configuration",
@@ -525,7 +529,7 @@ class BottledGhostsApp(App[None]):
 
         return BottleSettings(
             id=bottle_id,
-            name=value("config-name"), soul_prompt_path=value("config-soul"),
+            name=value("config-name"), soul_prompt_path=Path(value("config-soul")),
             network=value("config-network"), host=value("config-host"),
             port=int(value("config-port")),
             tls=self.query_one("#config-tls", Checkbox).value,

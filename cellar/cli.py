@@ -63,11 +63,11 @@ async def async_main(args: argparse.Namespace) -> None:
             print(f"Created Bottle {created_id}: {name}")
         elif args.command == "set-sasl":
             username = ask("SASL username")
-            password = getpass("SASL password: ")
-            if not password:
+            sasl_password = getpass("SASL password: ")
+            if not sasl_password:
                 raise ValueError("SASL password is required")
             await set_sasl_credentials(
-                db, bottle_id=args.bottle_id, username=username, password=password,
+                db, bottle_id=args.bottle_id, username=username, password=sasl_password,
                 actor=args.actor,
             )
             print(f"Updated SASL credentials for Bottle {args.bottle_id}")
@@ -78,9 +78,9 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"Updated LLM API key for Bottle {args.bottle_id}")
         elif args.command == "set-server-password":
-            password = getpass("IRC server password (empty clears): ").strip() or None
+            server_password = getpass("IRC server password (empty clears): ").strip() or None
             await set_server_password(
-                db, bottle_id=args.bottle_id, password=password, actor=args.actor,
+                db, bottle_id=args.bottle_id, password=server_password, actor=args.actor,
             )
             print(f"Updated IRC server password for Bottle {args.bottle_id}")
         elif args.command == "memory-extraction":
@@ -109,9 +109,9 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"Rejected candidate {args.candidate_id}")
         elif args.command == "memories":
-            for memory in await list_user_memories(db, user_id=args.user_id):
-                print(f"{memory.id}\t{memory.memory_type}\t{memory.confidence:.2f}\t"
-                      f"{memory.memory_text}")
+            for user_memory in await list_user_memories(db, user_id=args.user_id):
+                print(f"{user_memory.id}\t{user_memory.memory_type}\t"
+                      f"{user_memory.confidence:.2f}\t{user_memory.memory_text}")
         elif args.command == "memory-edit":
             await edit_user_memory(
                 db, memory_id=args.memory_id, text=args.text,
@@ -144,14 +144,15 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"Stored dream {summary.id}" if summary else "No messages in dream period")
         elif args.command == "dream-all":
-            for bottle in await load_enabled_bottles(db):
+            for enabled_bottle in await load_enabled_bottles(db):
                 try:
-                    summary = await run_dream(db, bottle=bottle, hours=args.hours)
+                    summary = await run_dream(db, bottle=enabled_bottle, hours=args.hours)
                     if summary:
-                        print(f"Bottle {bottle.id}: stored dream {summary.id}")
+                        print(f"Bottle {enabled_bottle.id}: stored dream {summary.id}")
                 except Exception:
                     logging.getLogger(__name__).exception(
-                        "dream failed for Bottle %d (%s); continuing", bottle.id, bottle.name
+                        "dream failed for Bottle %d (%s); continuing",
+                        enabled_bottle.id, enabled_bottle.name,
                     )
         elif args.command == "dreams":
             for summary in await list_dreams(

@@ -29,6 +29,7 @@ async def test_account_merges_nick_changes_into_one_uuid(tmp_path) -> None:
         count = await (await db.execute(
             "SELECT COUNT(*) FROM user_identities WHERE user_id = ?", (first,)
         )).fetchone()
+        assert count is not None
         assert count[0] == 3
     finally:
         await db.close()
@@ -75,11 +76,13 @@ async def test_explicit_uuid_merge_moves_identities(tmp_path) -> None:
             "SELECT DISTINCT user_id FROM user_identities ORDER BY user_id"
         )).fetchall()
         assert [row[0] for row in rows] == [keep]
-        assert (await (await db.execute(
+        candidate_owner = await (await db.execute(
             "SELECT user_id FROM memory_candidates"
-        )).fetchone())[0] == keep
-        assert (await (await db.execute(
+        )).fetchone()
+        memory_owner = await (await db.execute(
             "SELECT user_id FROM user_memories"
-        )).fetchone())[0] == keep
+        )).fetchone()
+        assert candidate_owner is not None and candidate_owner[0] == keep
+        assert memory_owner is not None and memory_owner[0] == keep
     finally:
         await db.close()

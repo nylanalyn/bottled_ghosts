@@ -240,12 +240,12 @@ async def recent_messages(
         "SELECT speaker, body FROM messages WHERE bot_id = ? AND network = ? AND channel = ? "
         "ORDER BY id DESC LIMIT ?", (bot_id, network, channel, limit),
     )
-    rows = await cursor.fetchall()
+    rows = list(await cursor.fetchall())
     return [(row["speaker"], row["body"]) for row in reversed(rows)]
 
 
 def exact_search_query(text: str) -> str | None:
-    words = []
+    words: list[str] = []
     for word in re.findall(r"[\w]+", text, flags=re.UNICODE):
         if len(word) >= 3 and word.casefold() not in {item.casefold() for item in words}:
             words.append(word)

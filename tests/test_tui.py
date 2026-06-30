@@ -133,6 +133,11 @@ async def test_dashboard_queries_bottle_and_recent_activity(tmp_path) -> None:
             "SELECT actor, changed_fields FROM configuration_events ORDER BY id"
         )).fetchall()
         bottle_count = await (await db.execute("SELECT COUNT(*) FROM bots")).fetchone()
+        assert candidate is not None
+        assert memory is not None
+        assert bottle_state is not None
+        assert model is not None
+        assert bottle_count is not None
         assert tuple(candidate) == ("approved",)
         assert [tuple(row) for row in audit] == [
             ("approve", "tui-test"),

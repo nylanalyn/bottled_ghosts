@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 004.
+The schema below reflects migration 005.
 
 ## schema_migrations
 
@@ -50,9 +50,22 @@ Foreign keys: `user_id` references `users(id)` with cascading deletion; `source_
 
 Allowed `memory_type` values are `preference`, `project`, `relationship`, `identity`, and `temporary_state`. Allowed statuses are `pending`, `approved`, and `rejected`.
 
+## user_memories
+
+Stores operator-approved long-term memory. Columns: `id INTEGER PRIMARY KEY`, `user_id TEXT NOT NULL`, `source_candidate_id INTEGER UNIQUE`, `memory_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_used_at TEXT`.
+
+Foreign keys: `user_id` references `users(id)` with cascading deletion; `source_candidate_id` references `memory_candidates(id)` with deletion setting it to null. Index: `user_memories_user_idx(user_id, memory_type, id DESC)`. Memory types use the same five-value constraint as sediment.
+
+## audit_events
+
+Append-only operator mutation history. Columns: `id INTEGER PRIMARY KEY`, `action TEXT NOT NULL`, `entity_type TEXT NOT NULL`, `entity_id INTEGER NOT NULL`, `related_entity_id INTEGER`, `actor TEXT NOT NULL`, `old_text TEXT`, `new_text TEXT`, `old_type TEXT`, `new_type TEXT`, `old_confidence REAL`, `new_confidence REAL`, `old_status TEXT`, `new_status TEXT`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`.
+
+Allowed actions are `approve`, `reject`, and `edit`. Allowed entity types are `memory_candidate` and `user_memory`. Index: `audit_events_entity_idx(entity_type, entity_id, id DESC)`. The `audit_events_no_update` and `audit_events_no_delete` triggers enforce append-only storage.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
 - 002: Add optional IRC SASL username and password fields.
 - 003: Add UUID users, observed IRC identities, message ownership, and FTS5 message search.
 - 004: Add per-Bottle extraction control and the pending memory-candidate review queue.
+- 005: Add approved user memories and append-only review/edit audit events.

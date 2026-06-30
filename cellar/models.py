@@ -86,3 +86,33 @@ class ExtractedMemories(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidates: list[ExtractedMemory] = Field(max_length=3)
+
+
+class MemoryCandidateView(BaseModel):
+    id: int
+    user_id: str
+    canonical_name: str
+    source_message_id: int
+    source_body: str
+    candidate_text: str
+    memory_type: MemoryType
+    confidence: float
+    status: Literal["pending", "approved", "rejected"]
+
+
+class UserMemory(BaseModel):
+    id: int
+    user_id: str
+    memory_text: str
+    memory_type: MemoryType
+    confidence: float
+
+
+class LogSearchResult(BaseModel):
+    id: int
+    timestamp: str
+    network: str
+    channel: str
+    speaker: str
+    body: str
+    bot_id: int

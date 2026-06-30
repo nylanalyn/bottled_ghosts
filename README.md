@@ -48,6 +48,23 @@ The extractor may write categorized candidates to SQLite, but all candidates
 remain pending and are not used as trusted memory. Disable extraction with the
 same command and `off`.
 
+Review sediment and inspect approved memories with:
+
+```bash
+bottled-ghosts sediment-list
+bottled-ghosts sediment-approve 1 --actor aureate
+bottled-ghosts sediment-reject 2 --actor aureate
+bottled-ghosts memories USER_UUID
+bottled-ghosts memory-edit 1 --text "Prefers mature cheese" --actor aureate
+```
+
+Approval, rejection, and edits are transactional and append an audit event.
+Only approved memories are retrieved into prompts. Search raw logs with:
+
+```bash
+bottled-ghosts logs-search "brass telescope" --bottle 1 --channel '#fractalsignal'
+```
+
 To add or replace SASL credentials on an existing Bottle:
 
 ```bash

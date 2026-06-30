@@ -6,29 +6,35 @@ from pathlib import Path
 
 from cellar.configure import ask, collect_configuration
 from cellar.runtime import run_bottle, run_bottles
+from cellar.memory_store import (
+    approve_memory_candidate,
+    edit_user_memory,
+    list_memory_candidates,
+    list_user_memories,
+    reject_memory_candidate,
+)
 from cellar.storage import (
     create_bottle,
     list_bottles,
     load_bottle,
     load_enabled_bottles,
     open_database,
+    search_logs,
     set_memory_extraction,
     set_sasl_credentials,
 )
 
+MEMORY_TYPES = ("preference", "project", "relationship", "identity", "temporary_state")
 
-async def async_main(
-    database: Path, command: str, bottle_id: int | None = None, command_value: str | None = None
-) -> None:
-    db = await open_database(database)
+
+async def async_main(args: argparse.Namespace) -> None:
+    db = await open_database(args.database)
     try:
-        if command == "run":
-            if bottle_id is None:
-                raise SystemExit("a Bottle id is required")
-            await run_bottle(db, await load_bottle(db, bottle_id))
-        elif command == "run-all":
+        if args.command == "run":
+            await run_bottle(db, await load_bottle(db, args.bottle_id))
+        elif args.command == "run-all":
             await run_bottles(db, await load_enabled_bottles(db))
-        elif command == "list":
+        elif args.command == "list":
             bottles = await list_bottles(db)
             if not bottles:
                 print("No Bottles configured.")
@@ -38,7 +44,7 @@ async def async_main(
                 memory = "memory:on" if bottle.extract_memories else "memory:off"
                 print(f"{bottle.id}\t{state}\t{memory}\t{bottle.name}\t"
                       f"{bottle.nick}@{bottle.network}\t{channels}")
-        elif command == "configure":
+        elif args.command == "configure":
             name, soul, irc, llm, max_lines, max_chars, cooldown, extract_memories = (
                 collect_configuration()
             )
@@ -48,21 +54,53 @@ async def async_main(
                 extract_memories=extract_memories,
             )
             print(f"Created Bottle {created_id}: {name}")
-        elif command == "set-sasl":
-            if bottle_id is None:
-                raise SystemExit("a Bottle id is required")
+        elif args.command == "set-sasl":
             username = ask("SASL username")
             password = getpass("SASL password: ")
             if not password:
                 raise ValueError("SASL password is required")
-            await set_sasl_credentials(db, bottle_id=bottle_id, username=username, password=password)
-            print(f"Updated SASL credentials for Bottle {bottle_id}")
-        elif command == "memory-extraction":
-            if bottle_id is None:
-                raise SystemExit("a Bottle id is required")
-            enabled = args_enabled(command_value)
-            await set_memory_extraction(db, bottle_id=bottle_id, enabled=enabled)
-            print(f"Memory extraction {'enabled' if enabled else 'disabled'} for Bottle {bottle_id}")
+            await set_sasl_credentials(
+                db, bottle_id=args.bottle_id, username=username, password=password
+            )
+            print(f"Updated SASL credentials for Bottle {args.bottle_id}")
+        elif args.command == "memory-extraction":
+            enabled = args_enabled(args.state)
+            await set_memory_extraction(db, bottle_id=args.bottle_id, enabled=enabled)
+            print(f"Memory extraction {'enabled' if enabled else 'disabled'} "
+                  f"for Bottle {args.bottle_id}")
+        elif args.command == "sediment-list":
+            for candidate in await list_memory_candidates(db, status=args.status):
+                print(f"{candidate.id}\t{candidate.status}\t{candidate.memory_type}\t"
+                      f"{candidate.confidence:.2f}\t{candidate.canonical_name}\t"
+                      f"{candidate.user_id}\n  candidate: {candidate.candidate_text}\n"
+                      f"  source {candidate.source_message_id}: {candidate.source_body}")
+        elif args.command == "sediment-approve":
+            memory_id = await approve_memory_candidate(
+                db, candidate_id=args.candidate_id, actor=args.actor
+            )
+            print(f"Approved candidate {args.candidate_id} as memory {memory_id}")
+        elif args.command == "sediment-reject":
+            await reject_memory_candidate(
+                db, candidate_id=args.candidate_id, actor=args.actor
+            )
+            print(f"Rejected candidate {args.candidate_id}")
+        elif args.command == "memories":
+            for memory in await list_user_memories(db, user_id=args.user_id):
+                print(f"{memory.id}\t{memory.memory_type}\t{memory.confidence:.2f}\t"
+                      f"{memory.memory_text}")
+        elif args.command == "memory-edit":
+            await edit_user_memory(
+                db, memory_id=args.memory_id, text=args.text,
+                memory_type=args.memory_type, confidence=args.confidence, actor=args.actor,
+            )
+            print(f"Updated memory {args.memory_id}")
+        elif args.command == "logs-search":
+            for result in await search_logs(
+                db, text=args.query, bot_id=args.bottle_id, network=args.network,
+                channel=args.channel, limit=args.limit,
+            ):
+                print(f"{result.id}\t{result.timestamp}\t{result.network}\t{result.channel}\t"
+                      f"<{result.speaker}> {result.body}")
     finally:
         await db.close()
 
@@ -88,9 +126,31 @@ def main() -> None:
     )
     memory_parser.add_argument("bottle_id", type=int)
     memory_parser.add_argument("state", choices=("on", "off"))
+    sediment_list = commands.add_parser("sediment-list", help="list memory candidates")
+    sediment_list.add_argument("--status", choices=("pending", "approved", "rejected"),
+                               default="pending")
+    sediment_approve = commands.add_parser("sediment-approve", help="approve a candidate")
+    sediment_approve.add_argument("candidate_id", type=int)
+    sediment_approve.add_argument("--actor", default="operator")
+    sediment_reject = commands.add_parser("sediment-reject", help="reject a candidate")
+    sediment_reject.add_argument("candidate_id", type=int)
+    sediment_reject.add_argument("--actor", default="operator")
+    memories_parser = commands.add_parser("memories", help="list approved memories for a user")
+    memories_parser.add_argument("user_id")
+    memory_edit = commands.add_parser("memory-edit", help="edit an approved memory")
+    memory_edit.add_argument("memory_id", type=int)
+    memory_edit.add_argument("--text")
+    memory_edit.add_argument("--type", dest="memory_type", choices=MEMORY_TYPES)
+    memory_edit.add_argument("--confidence", type=float)
+    memory_edit.add_argument("--actor", default="operator")
+    logs_search = commands.add_parser("logs-search", help="search message logs with FTS5")
+    logs_search.add_argument("query")
+    logs_search.add_argument("--bottle", dest="bottle_id", type=int)
+    logs_search.add_argument("--network")
+    logs_search.add_argument("--channel")
+    logs_search.add_argument("--limit", type=int, default=20)
     run_parser = commands.add_parser("run", help="run one configured Bottle")
     run_parser.add_argument("bottle_id", type=int)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    asyncio.run(async_main(args.database, args.command, getattr(args, "bottle_id", None),
-                           getattr(args, "state", None)))
+    asyncio.run(async_main(args))

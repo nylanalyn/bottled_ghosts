@@ -7,10 +7,10 @@ from cellar.migrations import migrate
 from cellar.models import (
     Bottle,
     BottleSummary,
-    ExtractedMemory,
     IRCMessage,
     IRCProfile,
     LLMProfile,
+    LogSearchResult,
 )
 
 
@@ -142,30 +142,6 @@ async def set_memory_extraction(
     await db.commit()
 
 
-async def store_memory_candidates(
-    db: aiosqlite.Connection,
-    *,
-    user_id: str,
-    source_message_id: int,
-    candidates: list[ExtractedMemory],
-) -> int:
-    inserted = 0
-    try:
-        for candidate in candidates:
-            cursor = await db.execute(
-                """INSERT OR IGNORE INTO memory_candidates(
-                       user_id, source_message_id, candidate_text, memory_type, confidence
-                   ) VALUES (?, ?, ?, ?, ?)""",
-                (user_id, source_message_id, candidate.text, candidate.type, candidate.confidence),
-            )
-            inserted += max(cursor.rowcount, 0)
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        raise
-    return inserted
-
-
 async def log_message(db: aiosqlite.Connection, message: IRCMessage) -> int:
     cursor = await db.execute(
         """INSERT INTO messages(network, channel, speaker, body, bot_id, user_id)
@@ -223,3 +199,28 @@ async def search_messages(
         (query, bot_id, network, channel, exclude_message_id, exclude_message_id, limit),
     )
     return [(row["speaker"], row["body"]) for row in await cursor.fetchall()]
+
+
+async def search_logs(
+    db: aiosqlite.Connection,
+    *,
+    text: str,
+    bot_id: int | None = None,
+    network: str | None = None,
+    channel: str | None = None,
+    limit: int = 20,
+) -> list[LogSearchResult]:
+    query = exact_search_query(text)
+    if query is None:
+        return []
+    cursor = await db.execute(
+        """SELECT m.id, m.timestamp, m.network, m.channel, m.speaker, m.body, m.bot_id
+           FROM messages_fts f JOIN messages m ON m.id = f.rowid
+           WHERE messages_fts MATCH ?
+             AND (? IS NULL OR m.bot_id = ?)
+             AND (? IS NULL OR m.network = ?)
+             AND (? IS NULL OR m.channel = ?)
+           ORDER BY bm25(messages_fts), m.id DESC LIMIT ?""",
+        (query, bot_id, bot_id, network, network, channel, channel, limit),
+    )
+    return [LogSearchResult(**dict(row)) for row in await cursor.fetchall()]

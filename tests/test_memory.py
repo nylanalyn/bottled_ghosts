@@ -1,3 +1,4 @@
+import aiosqlite
 import pytest
 from pydantic import ValidationError
 
@@ -10,13 +11,16 @@ from cellar.models import (
     IncomingIRCMessage,
     LLMProfile,
 )
-from cellar.storage import (
-    create_bottle,
-    log_message,
-    open_database,
-    set_memory_extraction,
+from cellar.memory_store import (
+    approve_memory_candidate,
+    approved_memory_texts,
+    edit_user_memory,
+    list_memory_candidates,
+    list_user_memories,
+    reject_memory_candidate,
     store_memory_candidates,
 )
+from cellar.storage import create_bottle, log_message, open_database, set_memory_extraction
 
 
 @pytest.mark.asyncio
@@ -74,5 +78,49 @@ async def test_pending_candidate_keeps_source_and_deduplicates(tmp_path) -> None
                FROM memory_candidates"""
         )).fetchone()
         assert tuple(row) == (user_id, message_id, "preference", "pending")
+
+        pending = await list_memory_candidates(db)
+        assert len(pending) == 1
+        assert pending[0].source_body == "I love cheese"
+        memory_id = await approve_memory_candidate(
+            db, candidate_id=pending[0].id, actor="test-operator"
+        )
+        assert await approved_memory_texts(db, user_id=user_id) == [
+            "preference: Likes cheese"
+        ]
+        await edit_user_memory(
+            db, memory_id=memory_id, text="Prefers mature cheese", confidence=0.8,
+            actor="test-operator",
+        )
+        memories = await list_user_memories(db, user_id=user_id)
+        assert (memories[0].memory_text, memories[0].confidence) == (
+            "Prefers mature cheese", 0.8,
+        )
+
+        second_message_id = await log_message(
+            db,
+            IRCMessage(network="local", channel="#test", speaker="alice",
+                       body="I am tired today", bot_id=bottle_id, user_id=user_id),
+        )
+        temporary = ExtractedMemory(
+            text="Tired today", type="temporary_state", confidence=0.7
+        )
+        await store_memory_candidates(
+            db, user_id=user_id, source_message_id=second_message_id, candidates=[temporary]
+        )
+        rejected = (await list_memory_candidates(db))[0]
+        await reject_memory_candidate(db, candidate_id=rejected.id, actor="test-operator")
+
+        audit = await (await db.execute(
+            "SELECT action, actor FROM audit_events ORDER BY id"
+        )).fetchall()
+        assert [tuple(row) for row in audit] == [
+            ("approve", "test-operator"),
+            ("edit", "test-operator"),
+            ("reject", "test-operator"),
+        ]
+        with pytest.raises(aiosqlite.IntegrityError, match="append-only"):
+            await db.execute("DELETE FROM audit_events")
+        await db.rollback()
     finally:
         await db.close()

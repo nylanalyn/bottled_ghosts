@@ -7,10 +7,11 @@ from cellar.irc import IRCClient
 from cellar.identity import resolve_user
 from cellar.llm import complete
 from cellar.memory import extract_candidates
+from cellar.memory_store import approved_memory_texts, store_memory_candidates
 from cellar.models import Bottle, IRCMessage, IncomingIRCMessage
 from cellar.prompt import build_prompt, read_soul
 from cellar.safety import Cooldown, sanitize
-from cellar.storage import log_message, recent_messages, search_messages, store_memory_candidates
+from cellar.storage import log_message, recent_messages, search_messages
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,8 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
             db, bot_id=bottle.id, network=bottle.irc.network, channel=channel,
             text=body, exclude_message_id=message_id,
         )
-        prompt = build_prompt(soul=soul, relevant=relevant, history=history[:-1],
+        memories = await approved_memory_texts(db, user_id=user_id)
+        prompt = build_prompt(soul=soul, memories=memories, relevant=relevant, history=history[:-1],
                               speaker=speaker, body=body)
         response = await complete(bottle.llm, prompt)
         lines = sanitize(response, max_lines=bottle.max_lines, max_chars=bottle.max_chars)

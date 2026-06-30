@@ -143,8 +143,56 @@ async def migration_004(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_005(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE user_memories (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            source_candidate_id INTEGER UNIQUE REFERENCES memory_candidates(id) ON DELETE SET NULL,
+            memory_text TEXT NOT NULL,
+            memory_type TEXT NOT NULL CHECK (
+                memory_type IN ('preference', 'project', 'relationship', 'identity', 'temporary_state')
+            ),
+            confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_used_at TEXT
+        );
+        CREATE INDEX user_memories_user_idx
+            ON user_memories(user_id, memory_type, id DESC);
+
+        CREATE TABLE audit_events (
+            id INTEGER PRIMARY KEY,
+            action TEXT NOT NULL CHECK (action IN ('approve', 'reject', 'edit')),
+            entity_type TEXT NOT NULL CHECK (entity_type IN ('memory_candidate', 'user_memory')),
+            entity_id INTEGER NOT NULL,
+            related_entity_id INTEGER,
+            actor TEXT NOT NULL,
+            old_text TEXT,
+            new_text TEXT,
+            old_type TEXT,
+            new_type TEXT,
+            old_confidence REAL,
+            new_confidence REAL,
+            old_status TEXT,
+            new_status TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX audit_events_entity_idx
+            ON audit_events(entity_type, entity_id, id DESC);
+        CREATE TRIGGER audit_events_no_update BEFORE UPDATE ON audit_events BEGIN
+            SELECT RAISE(ABORT, 'audit events are append-only');
+        END;
+        CREATE TRIGGER audit_events_no_delete BEFORE DELETE ON audit_events BEGIN
+            SELECT RAISE(ABORT, 'audit events are append-only');
+        END;
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
-    migration_001, migration_002, migration_003, migration_004,
+    migration_001, migration_002, migration_003, migration_004, migration_005,
 )
 
 

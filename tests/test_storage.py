@@ -10,6 +10,7 @@ from cellar.storage import (
     open_database,
     recent_messages,
     search_messages,
+    search_logs,
     set_sasl_credentials,
 )
 
@@ -54,5 +55,9 @@ async def test_migration_configuration_and_logging(tmp_path) -> None:
             db, bot_id=1, network="local", channel="#test", text="telescope",
             exclude_message_id=searchable_id,
         ) == []
+        results = await search_logs(db, text="brass telescope", bot_id=bottle_id)
+        assert [(result.id, result.speaker) for result in results] == [
+            (searchable_id, "alice")
+        ]
     finally:
         await db.close()

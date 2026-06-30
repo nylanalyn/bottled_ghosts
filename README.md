@@ -90,12 +90,17 @@ hooks, and becomes retrieval context for later replies.
 Open the read-only operational dashboard with:
 
 ```bash
-bottled-ghosts tui
+bottled-ghosts tui --actor aureate
 ```
 
 The dashboard shows configured Bottles, memory extraction state, pending
 sediment, enabled modules, last activity, and recent messages. Use the arrow
 keys to select a Bottle, `r` to refresh, and `q` to quit.
+The Sediment tab shows candidate provenance. Press `a` to approve the selected
+candidate or `x` to reject it; both actions use the supplied audit identity.
+The Memories tab lists trusted memories and their source. Edit the selected
+memory's text, type, or confidence and press the save button or `Ctrl+S`; the
+change is written transactionally with the same audit identity.
 
 To add or replace SASL credentials on an existing Bottle:
 

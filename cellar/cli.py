@@ -201,7 +201,8 @@ def main() -> None:
     dreams_parser = commands.add_parser("dreams", help="list stored dreams for a Bottle")
     dreams_parser.add_argument("bottle_id", type=int)
     dreams_parser.add_argument("--limit", type=int, default=20)
-    commands.add_parser("tui", help="open the operational dashboard")
+    tui_parser = commands.add_parser("tui", help="open the operational dashboard")
+    tui_parser.add_argument("--actor", default="operator", help="audit identity for TUI edits")
     run_parser = commands.add_parser("run", help="run one configured Bottle")
     run_parser.add_argument("bottle_id", type=int)
     args = parser.parse_args()
@@ -209,6 +210,6 @@ def main() -> None:
     if args.command == "tui":
         from tui.app import run_tui
 
-        run_tui(args.database)
+        run_tui(args.database, actor=args.actor)
         return
     asyncio.run(async_main(args))

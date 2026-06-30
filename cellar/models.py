@@ -108,6 +108,12 @@ class UserMemory(BaseModel):
     confidence: float
 
 
+class UserMemoryView(UserMemory):
+    canonical_name: str
+    source_candidate_id: int | None
+    source_body: str | None
+
+
 class LogSearchResult(BaseModel):
     id: int
     timestamp: str

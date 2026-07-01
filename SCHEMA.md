@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 013.
+The schema below reflects migration 014.
 
 ## schema_migrations
 
@@ -74,6 +74,10 @@ Allowed actions are `approve`, `reject`, and `edit`. Allowed entity types are `m
 
 Stores per-Bottle module enablement and future module settings. Columns: `bot_id INTEGER NOT NULL`, `module_name TEXT NOT NULL`, `enabled INTEGER NOT NULL DEFAULT 1`, `settings_json TEXT NOT NULL DEFAULT '{}'`. Primary key: `(bot_id, module_name)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `bot_modules_enabled_idx(bot_id, enabled, module_name)`.
 
+## ambient_chat_state
+
+Stores the ambient-chat module's persisted per-channel progress. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `eligible_lines_seen INTEGER NOT NULL DEFAULT 0`, `next_trigger_line INTEGER NOT NULL`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
+
 ## summaries
 
 Stores Bottle dream summaries with explicit coverage periods. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `period_start TEXT NOT NULL`, `period_end TEXT NOT NULL`, `summary TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `summaries_bot_period_idx(bot_id, period_end DESC, id DESC)`.
@@ -97,3 +101,4 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 - 011: Add ordered multi-message provenance for memory candidates.
 - 012: Add secret-free old and new values to configuration audit events.
 - 013: Add per-profile IRC user modes and runtime-enforced identity ignore rules.
+- 014: Add persisted per-channel state for the optional ambient-chat module.

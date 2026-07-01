@@ -476,6 +476,7 @@ class BottledGhostsApp(App[None]):
 
     async def _refresh_modules(self) -> None:
         table = self.query_one("#module-list", DataTable)
+        selected_name = self.selected_module_name
         table.clear()
         if self.db is None or self.selected_bottle_id is None:
             self.query_one("#module-title", Static).update("No Bottle selected.")
@@ -483,10 +484,14 @@ class BottledGhostsApp(App[None]):
             return
         states = await module_states(self.db, bottle_id=self.selected_bottle_id)
         settings = await module_settings(self.db, bottle_id=self.selected_bottle_id)
-        for name in available_modules():
+        names = available_modules()
+        for name in names:
             table.add_row(name, "enabled" if states.get(name, False) else "disabled", key=name)
-        self.selected_module_name = available_modules()[0] if available_modules() else None
+        self.selected_module_name = selected_name if selected_name in names else (
+            names[0] if names else None
+        )
         if self.selected_module_name is not None:
+            table.move_cursor(row=names.index(self.selected_module_name))
             self.query_one("#module-settings", Input).value = json.dumps(
                 settings.get(self.selected_module_name, {}), sort_keys=True,
             )

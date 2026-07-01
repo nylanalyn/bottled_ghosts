@@ -100,6 +100,9 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
         await app.action_toggle_runtime()
         assert bottle_id not in app.running_bottles
         await app.action_toggle_extraction()
+        app.query_one("#module-list", DataTable).move_cursor(row=1)
+        await pilot.pause()
+        assert app.selected_module_name == "channel_context"
         await app.action_toggle_module()
         app.query_one("#module-settings", Input).value = '{"label":"quiet room"}'
         await app.action_save_module_settings()

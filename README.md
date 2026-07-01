@@ -88,6 +88,17 @@ bottled-ghosts ignore-delete 1 2 --actor aureate
 `drop` messages are not logged or processed. `no_response` messages remain
 available as channel context but cannot trigger or extend a reply.
 
+Enable occasional unaddressed channel participation with the optional ambient
+chat module. Its line counter and random threshold survive restarts:
+
+```bash
+bottled-ghosts module-toggle 1 ambient_chat on --actor aureate
+bottled-ghosts module-settings 1 ambient_chat '{"min_lines":20,"max_lines":40}' --actor aureate
+```
+
+Ignored identities, private messages, and the Bottle's own messages do not count.
+All ambient replies still use normal listening windows and IRC safety limits.
+
 Dreaming is an explicit job rather than a hidden background scheduler:
 
 ```bash

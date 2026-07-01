@@ -11,6 +11,7 @@ from cellar.models import (
     IncomingIRCMessage,
     LLMProfile,
 )
+from cellar.module_store import set_module_enabled, set_module_settings
 from cellar.runtime import run_bottle, run_bottle_once, run_bottles
 from cellar.storage import create_bottle, load_bottle, open_database
 
@@ -302,5 +303,63 @@ async def test_direct_messages_share_stable_incoming_and_outgoing_history(
             ("ghost", "private reply"),
         ]
         assert sent == [("Alice", "private reply")]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ambient_module_requests_normal_runtime_response(monkeypatch, tmp_path) -> None:
+    database = tmp_path / "ambient-runtime.db"
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(database)
+    bottle_id = await create_bottle(
+        db, name="test", soul_prompt_path=soul,
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost", channels=["#test"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+        cooldown_seconds=0, listen_window_seconds=0.01,
+    )
+    await set_module_enabled(
+        db, bottle_id=bottle_id, module_name="ambient_chat", enabled=True,
+    )
+    await set_module_settings(
+        db, bottle_id=bottle_id, module_name="ambient_chat",
+        settings={"min_lines": 1, "max_lines": 1}, actor="test",
+    )
+    bottle = await load_bottle(db, bottle_id)
+    sent: list[tuple[str, str]] = []
+    prompts: list[list[dict[str, str]]] = []
+
+    class FakeIRCClient:
+        def __init__(self, _profile, handler) -> None:
+            self.handler = handler
+
+        async def run(self) -> None:
+            await self.handler(IncomingIRCMessage(
+                nick="alice", hostmask="u@host", account=None,
+                target="#test", body="an ordinary unaddressed line",
+            ))
+            await asyncio.sleep(0.03)
+
+        async def send_message(self, target: str, body: str) -> None:
+            sent.append((target, body))
+
+    async def fake_complete(_profile, prompt: list[dict[str, str]]) -> str:
+        prompts.append(prompt)
+        return "ambient reply"
+
+    monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+    monkeypatch.setattr("cellar.runtime.complete", fake_complete)
+
+    try:
+        await run_bottle_once(db, bottle)
+        assert sent == [("#test", "ambient reply")]
+        assert len(prompts) == 1
+        assert "ambient contribution" in prompts[0][1]["content"]
+        state = await (await db.execute(
+            "SELECT eligible_lines_seen, next_trigger_line FROM ambient_chat_state"
+        )).fetchone()
+        assert state is not None and tuple(state) == (0, 1)
     finally:
         await db.close()

@@ -316,10 +316,26 @@ async def migration_013(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_014(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE ambient_chat_state (
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            eligible_lines_seen INTEGER NOT NULL DEFAULT 0 CHECK (eligible_lines_seen >= 0),
+            next_trigger_line INTEGER NOT NULL CHECK (next_trigger_line > 0),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (bot_id, network, channel)
+        );
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
-    migration_011, migration_012, migration_013,
+    migration_011, migration_012, migration_013, migration_014,
 )
 
 

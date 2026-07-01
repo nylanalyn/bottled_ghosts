@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Literal, Protocol
 
 import aiosqlite
 
@@ -17,6 +17,8 @@ class ModuleContext:
     user_id: str
     source_message_id: int
     response_allowed: bool = True
+    request_response: bool = False
+    response_reason: Literal["addressed", "ambient"] = "addressed"
     module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
     prompt_sections: list[str] = field(default_factory=list)
     response: str | None = None

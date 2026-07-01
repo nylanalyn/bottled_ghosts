@@ -30,6 +30,7 @@ class WindowMessage:
     user_id: str
     message_id: int
     conversation: str
+    addressed: bool
 
 
 async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
@@ -51,6 +52,9 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
         module_context = ModuleContext(
             db=db, bottle=bottle, message=message, user_id=user_id,
             source_message_id=latest.message_id,
+            response_reason=(
+                "addressed" if any(item.addressed for item in items) else "ambient"
+            ),
         )
         logger.info("generating reply to %s in %s", speaker, reply_target)
         async with database_lock:
@@ -138,11 +142,11 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
             return
         key = (irc_casefold(conversation), user_id)
         addressed = direct_message or mentions_nick(message.body, bottle.irc.nick)
-        if windows.contains(key) or addressed:
+        if windows.contains(key) or addressed or module_context.request_response:
             windows.add(
                 key, WindowMessage(
                     message=message, user_id=user_id, message_id=message_id,
-                    conversation=conversation,
+                    conversation=conversation, addressed=addressed,
                 )
             )
 

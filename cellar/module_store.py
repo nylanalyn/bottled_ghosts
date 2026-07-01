@@ -76,6 +76,8 @@ async def set_module_settings(
     actor = actor.strip()
     if not actor:
         raise ValueError("configuration actor cannot be empty")
+    if module_name == "admin_api" and "token" in settings:
+        raise ValueError("use set-admin-token to configure the admin API token")
     encoded = json.dumps(settings, sort_keys=True, separators=(",", ":"))
     try:
         await db.execute("BEGIN IMMEDIATE")
@@ -103,9 +105,20 @@ async def set_module_settings(
             """INSERT INTO configuration_events(
                    bot_id, actor, changed_fields, old_value, new_value
                ) VALUES (?, ?, ?, ?, ?)""",
-            (bottle_id, actor, f"module:{module_name}:settings", old_encoded, encoded),
+            (bottle_id, actor, f"module:{module_name}:settings",
+             _audit_settings(module_name, old_encoded),
+             _audit_settings(module_name, encoded)),
         )
         await db.commit()
     except Exception:
         await db.rollback()
         raise
+
+
+def _audit_settings(module_name: str, encoded: str) -> str:
+    if module_name != "admin_api":
+        return encoded
+    value = json.loads(encoded)
+    if isinstance(value, dict) and "token" in value:
+        value["token"] = "[redacted]"
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))

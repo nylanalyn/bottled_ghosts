@@ -6,6 +6,7 @@ from getpass import getpass
 from pathlib import Path
 
 from cellar.configure import ask, collect_configuration
+from cellar.admin_store import set_admin_api_token
 from cellar.dream_store import list_dreams
 from cellar.dreams import run_dream
 from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
@@ -170,6 +171,14 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"Updated {args.module_name} settings for Bottle {args.bottle_id}; "
                   "reconnect to apply")
+        elif args.command == "set-admin-token":
+            token = getpass("Admin API token: ").strip()
+            if not token:
+                raise ValueError("admin API token is required")
+            await set_admin_api_token(
+                db, bottle_id=args.bottle_id, token=token, actor=args.actor,
+            )
+            print(f"Updated admin API token for Bottle {args.bottle_id}; reconnect to apply")
         elif args.command == "ignore-list":
             for rule in await list_ignore_rules(db, bottle_id=args.bottle_id):
                 print(f"{rule.id}\t{rule.network}\t{rule.match_type}\t"
@@ -287,6 +296,11 @@ def main() -> None:
     module_settings_parser.add_argument("module_name")
     module_settings_parser.add_argument("settings_json")
     module_settings_parser.add_argument("--actor", default="operator")
+    admin_token_parser = commands.add_parser(
+        "set-admin-token", help="set the admin API bearer token through a hidden prompt"
+    )
+    admin_token_parser.add_argument("bottle_id", type=int)
+    admin_token_parser.add_argument("--actor", default="operator")
     ignore_list = commands.add_parser("ignore-list", help="list a Bottle's ignore rules")
     ignore_list.add_argument("bottle_id", type=int)
     ignore_add = commands.add_parser("ignore-add", help="add an audited IRC ignore rule")

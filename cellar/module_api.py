@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
@@ -25,6 +26,7 @@ class ModuleContext:
     source_message_id: int
     response_allowed: bool = True
     request_response: bool = False
+    monitor_when_silent: bool = False
     response_reason: Literal["addressed", "ambient"] = "addressed"
     module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
     prompt_sections: list[str] = field(default_factory=list)
@@ -39,6 +41,21 @@ class NightlyContext:
     period_start: str
     period_end: str
     summary: str
+    module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
+
+
+@dataclass
+class RuntimeState:
+    irc_connected: bool = False
+    database_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+@dataclass
+class RuntimeContext:
+    db: aiosqlite.Connection
+    bottle: Bottle
+    database_lock: asyncio.Lock
+    state: RuntimeState
     module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
@@ -69,11 +86,23 @@ class ModuleRunner:
     async def nightly(self, ctx: NightlyContext) -> None:
         await self._run("nightly", ctx)
 
-    async def _run(self, hook: str, ctx: ModuleContext | NightlyContext) -> None:
+    async def start(self, ctx: RuntimeContext) -> None:
+        await self._run("start", ctx)
+
+    async def stop(self, ctx: RuntimeContext) -> None:
+        await self._run("stop", ctx, reverse=True)
+
+    async def _run(
+        self, hook: str, ctx: ModuleContext | NightlyContext | RuntimeContext,
+        *, reverse: bool = False,
+    ) -> None:
         ctx.module_settings = self.settings
-        for module in self.modules:
+        modules = reversed(self.modules) if reverse else self.modules
+        for module in modules:
             try:
-                callback = getattr(module, hook)
+                callback = getattr(module, hook, None)
+                if callback is None:
+                    continue
                 await callback(ctx)
             except Exception:
                 logger.exception("module %s failed during %s", type(module).__name__, hook)

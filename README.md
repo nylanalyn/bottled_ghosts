@@ -74,6 +74,30 @@ bottled-ghosts module-settings 1 channel_context '{"label":"quiet room"}' --acto
 Reconnect the Bottle after changing a module toggle. Module hook failures are
 logged and isolated from other modules and the IRC runtime.
 
+Connect a Bottle to the existing `ircbot_core/discord_admin.py` router with a
+unique loopback port and bearer token:
+
+```bash
+bottled-ghosts module-settings 1 admin_api '{"host":"127.0.0.1","port":9103}' --actor aureate
+bottled-ghosts set-admin-token 1 --actor aureate
+bottled-ghosts module-toggle 1 admin_api on --actor aureate
+```
+
+Point the router's bot entry at `http://127.0.0.1:9103` with the same token. The
+supported commands are `help`, `status`, `model`, `off`, and `on`. `off` leaves
+IRC connected and persistently suppresses public model responses.
+
+Enable Rumi's addressed-message emergency monitoring separately:
+
+```bash
+bottled-ghosts module-settings 1 emergency_alert '{"discord_user_id":"123456789"}' --actor aureate
+bottled-ghosts module-toggle 1 emergency_alert on --actor aureate
+```
+
+Direct messages and nick mentions are evaluated with retrieved channel context.
+Genuine immediate emergencies queue a Discord mention containing the summary
+and IRC source. Monitoring remains active while public responses are off.
+
 IRC user modes such as `+B` are configured with the rest of the public IRC
 profile in the TUI and are applied after registration, before channel joins.
 Manage per-Bottle identity ignores through the Ignore tab or CLI:

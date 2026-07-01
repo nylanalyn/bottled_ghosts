@@ -359,10 +359,41 @@ async def migration_015(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_016(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE bot_runtime_control (
+            bot_id INTEGER PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
+            response_enabled INTEGER NOT NULL DEFAULT 1
+                CHECK (response_enabled IN (0, 1)),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE admin_events (
+            id INTEGER PRIMARY KEY,
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            event_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            source_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            delivered_at TEXT,
+            UNIQUE(bot_id, event_type, source_message_id)
+        );
+        CREATE INDEX admin_events_delivery_idx
+            ON admin_events(bot_id, delivered_at, id);
+        CREATE TABLE admin_api_credentials (
+            bot_id INTEGER PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
+            token TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
     migration_011, migration_012, migration_013, migration_014, migration_015,
+    migration_016,
 )
 
 

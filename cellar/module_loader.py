@@ -8,13 +8,17 @@ from cellar.module_api import ModuleContract, ModuleRunner
 from modules.channel_context import Module as ChannelContextModule
 from modules.ambient_chat import Module as AmbientChatModule
 from modules.fishing import Module as FishingModule
+from modules.admin_api import Module as AdminAPIModule
+from modules.emergency_alert import Module as EmergencyAlertModule
 
 logger = logging.getLogger(__name__)
 ModuleFactory = Callable[[], ModuleContract]
 
 REGISTRY: tuple[tuple[str, ModuleFactory], ...] = (
+    ("admin_api", AdminAPIModule),
     ("ambient_chat", AmbientChatModule),
     ("channel_context", ChannelContextModule),
+    ("emergency_alert", EmergencyAlertModule),
     ("fishing", FishingModule),
 )
 

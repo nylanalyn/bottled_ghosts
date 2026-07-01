@@ -90,6 +90,18 @@ Stores Bottle dream summaries with explicit coverage periods. Columns: `id INTEG
 
 Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `actor TEXT NOT NULL`, `changed_fields TEXT NOT NULL`, `old_value TEXT`, `new_value TEXT`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Non-secret values are JSON-encoded when a change has structured detail; secret values are never recorded. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `configuration_events_bot_idx(bot_id, id DESC)`. The `configuration_events_no_update` and `configuration_events_no_delete` triggers enforce append-only storage.
 
+## bot_runtime_control
+
+Stores persistent operational response control separately from Bottle enablement and process liveness. Columns: `bot_id INTEGER PRIMARY KEY`, `response_enabled INTEGER NOT NULL DEFAULT 1`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
+
+## admin_events
+
+Stores inspectable outbound administration events. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `event_type TEXT NOT NULL`, `message TEXT NOT NULL`, `source_message_id INTEGER`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `delivered_at TEXT`. Foreign keys reference `bots(id)` with cascading deletion and `messages(id)` with `ON DELETE SET NULL`. Unique constraint: `(bot_id, event_type, source_message_id)`. Index: `admin_events_delivery_idx(bot_id, delivered_at, id)`.
+
+## admin_api_credentials
+
+Stores the per-Bottle admin API bearer token. Columns: `bot_id INTEGER PRIMARY KEY`, `token TEXT NOT NULL`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Token values are never copied into audit rows.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -107,3 +119,4 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 - 013: Add per-profile IRC user modes and runtime-enforced identity ignore rules.
 - 014: Add persisted per-channel state for the optional ambient-chat module.
 - 015: Add persisted per-channel state and deadlines for the optional fishing module.
+- 016: Add persistent response control, outbound administration events, and admin API credentials.

@@ -109,6 +109,7 @@ class IRCClient:
         self.capabilities: set[str] = set()
         self.pending_capabilities: set[str] = set()
         self.sasl_authenticating = False
+        self.connection_state_handler: Callable[[bool], None] | None = None
 
     async def send_raw(self, line: str) -> None:
         if self.writer is None:
@@ -212,6 +213,8 @@ class IRCClient:
                     raise RuntimeError(f"SASL authentication failed (IRC {numeric})")
                 if numeric == "001":
                     registered = True
+                    if self.connection_state_handler is not None:
+                        self.connection_state_handler(True)
                     logger.info("IRC registration complete as %s", self.profile.nick)
                     if self.profile.user_modes:
                         await self.send_raw(
@@ -236,6 +239,8 @@ class IRCClient:
                                          parsed.nick, parsed.target)
             raise ConnectionError("IRC server closed the connection")
         finally:
+            if self.connection_state_handler is not None:
+                self.connection_state_handler(False)
             self.writer.close()
             await self.writer.wait_closed()
             self.writer = None

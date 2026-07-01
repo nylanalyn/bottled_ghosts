@@ -296,10 +296,30 @@ async def migration_012(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_013(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        ALTER TABLE irc_profiles ADD COLUMN user_modes TEXT NOT NULL DEFAULT '';
+        CREATE TABLE irc_ignore_rules (
+            id INTEGER PRIMARY KEY,
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            match_type TEXT NOT NULL CHECK (match_type IN ('account', 'hostmask', 'nick')),
+            match_value TEXT NOT NULL,
+            action TEXT NOT NULL CHECK (action IN ('drop', 'no_response')),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(bot_id, network, match_type, match_value, action)
+        );
+        CREATE INDEX irc_ignore_rules_lookup_idx
+            ON irc_ignore_rules(bot_id, network, match_type, match_value);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
-    migration_011, migration_012,
+    migration_011, migration_012, migration_013,
 )
 
 

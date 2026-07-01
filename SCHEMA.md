@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 012.
+The schema below reflects migration 013.
 
 ## schema_migrations
 
@@ -8,7 +8,7 @@ Records applied schema versions. Columns: `version INTEGER PRIMARY KEY`, `applie
 
 ## irc_profiles
 
-Stores IRC connection configuration. Columns: `id INTEGER PRIMARY KEY`, `network TEXT NOT NULL`, `host TEXT NOT NULL`, `port INTEGER NOT NULL`, `tls INTEGER NOT NULL`, `nick TEXT NOT NULL`, `username TEXT NOT NULL`, `realname TEXT NOT NULL`, `channels TEXT NOT NULL`, `password TEXT`, `sasl_username TEXT`, `sasl_password TEXT`.
+Stores IRC connection configuration. Columns: `id INTEGER PRIMARY KEY`, `network TEXT NOT NULL`, `host TEXT NOT NULL`, `port INTEGER NOT NULL`, `tls INTEGER NOT NULL`, `nick TEXT NOT NULL`, `username TEXT NOT NULL`, `realname TEXT NOT NULL`, `channels TEXT NOT NULL`, `password TEXT`, `sasl_username TEXT`, `sasl_password TEXT`, `user_modes TEXT NOT NULL DEFAULT ''`.
 
 `channels` is a JSON-encoded list inside SQLite; SQLite remains canonical.
 
@@ -41,6 +41,10 @@ Foreign key: `user_id` references `users(id)` with cascading deletion. Indexes: 
 ## messages_fts
 
 FTS5 external-content virtual table indexing `messages.body` with `messages.id` as its row ID. The `messages_fts_insert`, `messages_fts_delete`, and `messages_fts_update` triggers keep it synchronized with `messages`.
+
+## irc_ignore_rules
+
+Stores per-Bottle exact IRC identity rules. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `match_type TEXT NOT NULL`, `match_value TEXT NOT NULL`, `action TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Match types are `account`, `hostmask`, and `nick`; actions are `drop` and `no_response`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Unique constraint: `(bot_id, network, match_type, match_value, action)`. Index: `irc_ignore_rules_lookup_idx(bot_id, network, match_type, match_value)`.
 
 ## memory_candidates
 
@@ -92,3 +96,4 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 - 010: Add explicit temporary-memory expiry and expiry audit fields.
 - 011: Add ordered multi-message provenance for memory candidates.
 - 012: Add secret-free old and new values to configuration audit events.
+- 013: Add per-profile IRC user modes and runtime-enforced identity ignore rules.

@@ -86,6 +86,14 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
         await pilot.pause()
         app.selected_bottle_id = bottle_id
         app.selected_module_name = "channel_context"
+        app.query_one("#ignore-network", Input).value = "local"
+        app.query_one("#ignore-match-type", Select).value = "account"
+        app.query_one("#ignore-match-value", Input).value = "otherbot"
+        app.query_one("#ignore-action", Select).value = "no_response"
+        await app.action_add_ignore_rule()
+        assert app.query_one("#ignore-list", DataTable).row_count == 1
+        await app.action_delete_ignore_rule()
+        assert app.query_one("#ignore-list", DataTable).row_count == 0
         await app.action_toggle_runtime()
         await runtime_started.wait()
         assert bottle_id in app.running_bottles
@@ -104,6 +112,7 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
         assert app.query_one("#log-results", DataTable).row_count == 1
         app.query_one("#config-name", Input).value = "mossy"
         app.query_one("#config-model", Input).value = "new-model"
+        app.query_one("#config-user-modes", Input).value = "+B"
         await app.action_save_configuration()
         await pilot.pause()
         app.action_new_configuration()
@@ -116,6 +125,7 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
             "config-nick": "fern",
             "config-username": "fern",
             "config-realname": "Fern",
+            "config-user-modes": "+B",
             "config-channels": "#test",
             "config-endpoint": "http://localhost/chat",
             "config-model": "new-model",
@@ -125,7 +135,7 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
         await app.action_save_configuration()
         await pilot.pause()
         assert app.query_one("#bottles", DataTable).row_count == 2
-        assert app.query_one("#audit-list", DataTable).row_count == 9
+        assert app.query_one("#audit-list", DataTable).row_count == 11
 
     db = await open_database(database)
     try:
@@ -145,6 +155,10 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
             """SELECT l.model FROM llm_profiles l JOIN bots b ON b.llm_profile_id = l.id
                WHERE b.id = ?""", (bottle_id,)
         )).fetchone()
+        user_modes = await (await db.execute(
+            """SELECT i.user_modes FROM irc_profiles i
+               JOIN bots b ON b.irc_profile_id = i.id WHERE b.id = ?""", (bottle_id,)
+        )).fetchone()
         configuration_events = await (await db.execute(
             "SELECT actor, changed_fields FROM configuration_events ORDER BY id"
         )).fetchall()
@@ -153,6 +167,7 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
         assert memory is not None
         assert bottle_state is not None
         assert model is not None
+        assert user_modes is not None
         assert bottle_count is not None
         assert tuple(candidate) == ("approved",)
         assert [tuple(row) for row in audit] == [
@@ -162,13 +177,16 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
         assert tuple(memory) == ("Prefers green tea", 0.8)
         assert tuple(bottle_state) == (0, 1, "mossy")
         assert tuple(model) == ("new-model",)
+        assert tuple(user_modes) == ("+B",)
         assert [tuple(row) for row in configuration_events] == [
             ("operator", "created"),
+            ("tui-test", "ignore_rule:added"),
+            ("tui-test", "ignore_rule:deleted"),
             ("tui-test", "extract_memories"),
             ("tui-test", "module:channel_context:enabled"),
             ("tui-test", "module:channel_context:settings"),
             ("tui-test", "enabled"),
-            ("tui-test", "model,name"),
+            ("tui-test", "model,name,user_modes"),
             ("tui-test", "created"),
         ]
         assert bottle_count[0] == 2

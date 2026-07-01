@@ -16,6 +16,7 @@ class BottleSettings(BaseModel):
     nick: str = Field(min_length=1)
     username: str = Field(min_length=1)
     realname: str = Field(min_length=1)
+    user_modes: str = Field(pattern=r"^$|^[+-][A-Za-z]+(?:[+-][A-Za-z]+)*$")
     channels: list[str] = Field(min_length=1)
     endpoint: str = Field(min_length=1)
     model: str = Field(min_length=1)
@@ -35,7 +36,7 @@ async def load_bottle_settings(
                   b.cooldown_seconds, b.listen_window_seconds,
                   i.network, i.host, i.port, i.tls, i.nick,
                   i.username, i.realname, i.channels, l.endpoint, l.model,
-                  l.temperature, l.max_tokens
+                  i.user_modes, l.temperature, l.max_tokens
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
            JOIN llm_profiles l ON l.id = b.llm_profile_id WHERE b.id = ?""",
         (bottle_id,),
@@ -77,10 +78,11 @@ async def save_bottle_settings(
         )
         await db.execute(
             """UPDATE irc_profiles SET network = ?, host = ?, port = ?, tls = ?, nick = ?,
-                   username = ?, realname = ?, channels = ?
+                   username = ?, realname = ?, channels = ?, user_modes = ?
                WHERE id = (SELECT irc_profile_id FROM bots WHERE id = ?)""",
             (settings.network, settings.host, settings.port, settings.tls, settings.nick,
-             settings.username, settings.realname, json.dumps(settings.channels), settings.id),
+             settings.username, settings.realname, json.dumps(settings.channels),
+             settings.user_modes, settings.id),
         )
         await db.execute(
             """UPDATE llm_profiles SET endpoint = ?, model = ?, temperature = ?, max_tokens = ?

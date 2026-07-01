@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from typing import Literal
 
@@ -19,11 +20,18 @@ class IRCProfile(BaseModel):
     password: str | None = None
     sasl_username: str | None = None
     sasl_password: str | None = None
+    user_modes: str = ""
 
     @model_validator(mode="after")
     def validate_sasl_credentials(self) -> "IRCProfile":
         if bool(self.sasl_username) != bool(self.sasl_password):
             raise ValueError("SASL username and password must be provided together")
+        return self
+
+    @model_validator(mode="after")
+    def validate_user_modes(self) -> "IRCProfile":
+        if self.user_modes and not re.fullmatch(r"[+-][A-Za-z]+(?:[+-][A-Za-z]+)*", self.user_modes):
+            raise ValueError("IRC user modes must look like +B or +Bi-w")
         return self
 
 
@@ -138,4 +146,14 @@ class DreamSummary(BaseModel):
     period_start: str
     period_end: str
     summary: str
+    created_at: str
+
+
+class IgnoreRule(BaseModel):
+    id: int
+    bot_id: int
+    network: str
+    match_type: Literal["account", "hostmask", "nick"]
+    match_value: str
+    action: Literal["drop", "no_response"]
     created_at: str

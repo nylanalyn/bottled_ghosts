@@ -1,6 +1,7 @@
 import base64
 
 import pytest
+from pydantic import ValidationError
 
 from cellar.irc import (
     IRCClient,
@@ -48,6 +49,14 @@ def test_rfc1459_nickname_matching_requires_boundaries() -> None:
 
 def test_utf8_truncation_preserves_complete_characters() -> None:
     assert truncate_utf8("ééé", 5) == "éé"
+
+
+def test_user_modes_reject_protocol_injection() -> None:
+    with pytest.raises(ValidationError, match="user modes"):
+        IRCProfile(
+            network="test", host="localhost", nick="ghost", username="ghost",
+            realname="Ghost", channels=["#test"], user_modes="+B JOIN #other",
+        )
 
 
 @pytest.mark.asyncio
@@ -137,3 +146,53 @@ async def test_send_message_enforces_irc_byte_limit() -> None:
     assert len(writer.data[:-2]) <= 510
     assert writer.data.endswith(b"\r\n")
     writer.data[:-2].decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_user_modes_are_set_before_channel_join(monkeypatch) -> None:
+    class Reader:
+        def __init__(self) -> None:
+            self.lines = iter([b":server 001 ghost :welcome\r\n", b""])
+
+        async def readline(self) -> bytes:
+            return next(self.lines)
+
+    class Writer:
+        def __init__(self) -> None:
+            self.lines: list[str] = []
+
+        def write(self, data: bytes) -> None:
+            self.lines.append(data.decode().rstrip("\r\n"))
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    reader = Reader()
+    writer = Writer()
+
+    async def open_connection(*_args, **_kwargs):
+        return reader, writer
+
+    async def handler(_message) -> None:
+        return None
+
+    monkeypatch.setattr("cellar.irc.asyncio.open_connection", open_connection)
+    client = IRCClient(
+        IRCProfile(
+            network="test", host="localhost", tls=False, nick="ghost",
+            username="ghost", realname="Ghost", channels=["#one", "#two"],
+            user_modes="+B",
+        ),
+        handler,
+    )
+    with pytest.raises(ConnectionError):
+        await client.run()
+
+    assert writer.lines.index("MODE ghost +B") < writer.lines.index("JOIN #one")
+    assert writer.lines.index("MODE ghost +B") < writer.lines.index("JOIN #two")

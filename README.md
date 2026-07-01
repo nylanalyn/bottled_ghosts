@@ -74,6 +74,20 @@ bottled-ghosts module-settings 1 channel_context '{"label":"quiet room"}' --acto
 Reconnect the Bottle after changing a module toggle. Module hook failures are
 logged and isolated from other modules and the IRC runtime.
 
+IRC user modes such as `+B` are configured with the rest of the public IRC
+profile in the TUI and are applied after registration, before channel joins.
+Manage per-Bottle identity ignores through the Ignore tab or CLI:
+
+```bash
+bottled-ghosts ignore-add 1 libera account SomeBot no_response --actor aureate
+bottled-ghosts ignore-add 1 libera hostmask noisy@example drop --actor aureate
+bottled-ghosts ignore-list 1
+bottled-ghosts ignore-delete 1 2 --actor aureate
+```
+
+`drop` messages are not logged or processed. `no_response` messages remain
+available as channel context but cannot trigger or extend a reply.
+
 Dreaming is an explicit job rather than a hidden background scheduler:
 
 ```bash

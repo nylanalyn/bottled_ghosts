@@ -16,6 +16,7 @@ class ModuleContext:
     message: IncomingIRCMessage
     user_id: str
     source_message_id: int
+    response_allowed: bool = True
     module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
     prompt_sections: list[str] = field(default_factory=list)
     response: str | None = None

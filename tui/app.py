@@ -34,6 +34,7 @@ from cellar.memory_store import (
     list_memory_candidates,
     reject_memory_candidate,
 )
+from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
 from cellar.config_store import BottleSettings, load_bottle_settings, save_bottle_settings
 from cellar.module_loader import available_modules
 from cellar.module_store import (
@@ -87,6 +88,8 @@ class BottledGhostsApp(App[None]):
     #new-configuration { margin: 1 1 2 0; width: 20; }
     #audit-list { height: 55%; border: solid $accent; }
     #audit-detail { height: 1fr; border: solid $secondary; padding: 1 2; }
+    #ignore-list { height: 1fr; border: solid $accent; }
+    .ignore-field { margin: 0 1; }
     """
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -112,6 +115,7 @@ class BottledGhostsApp(App[None]):
         self.selected_memory_id: int | None = None
         self.selected_bottle_id: int | None = None
         self.selected_module_name: str | None = None
+        self.selected_ignore_rule_id: int | None = None
         self.log_results: dict[int, LogSearchResult] = {}
         self.creating_bottle = False
         self.audit_events: dict[str, DashboardAuditEvent] = {}
@@ -148,6 +152,24 @@ class BottledGhostsApp(App[None]):
                 yield Input(placeholder='Module settings JSON object, e.g. {"key":"value"}',
                             id="module-settings")
                 yield Button("Save audited settings", id="save-module-settings")
+            with TabPane("Ignore", id="ignore-tab"):
+                yield DataTable(id="ignore-list")
+                yield Input(placeholder="Network", id="ignore-network", classes="ignore-field")
+                yield Select(
+                    [("Account", "account"), ("Hostmask", "hostmask"), ("Nick", "nick")],
+                    value="account", allow_blank=False, id="ignore-match-type",
+                    classes="ignore-field",
+                )
+                yield Input(placeholder="Exact account, hostmask, or nick",
+                            id="ignore-match-value", classes="ignore-field")
+                yield Select(
+                    [("Keep as context; never respond", "no_response"),
+                     ("Drop completely", "drop")],
+                    value="no_response", allow_blank=False, id="ignore-action",
+                    classes="ignore-field",
+                )
+                yield Button("Add audited rule", id="add-ignore-rule")
+                yield Button("Delete selected rule", id="delete-ignore-rule")
             with TabPane("Log Search", id="log-search-tab"):
                 yield Input(placeholder="FTS search query", id="log-search-query")
                 yield Checkbox("Scope to selected Bottle", value=True, id="log-search-scope")
@@ -167,6 +189,7 @@ class BottledGhostsApp(App[None]):
                         ("IRC nickname", "config-nick", "text"),
                         ("IRC username", "config-username", "text"),
                         ("IRC real name", "config-realname", "text"),
+                        ("IRC user modes (e.g. +B)", "config-user-modes", "text"),
                         ("IRC channels (comma-separated)", "config-channels", "text"),
                         ("LLM chat-completions endpoint", "config-endpoint", "text"),
                         ("LLM model", "config-model", "text"),
@@ -220,6 +243,10 @@ class BottledGhostsApp(App[None]):
         audit_table.cursor_type = "row"
         audit_table.zebra_stripes = True
         audit_table.add_columns("Timestamp", "Actor", "Category", "Action", "Target")
+        ignore_table = self.query_one("#ignore-list", DataTable)
+        ignore_table.cursor_type = "row"
+        ignore_table.zebra_stripes = True
+        ignore_table.add_columns("ID", "Network", "Match", "Value", "Action")
         await self.refresh_all()
         bottle_table.focus()
 
@@ -244,6 +271,7 @@ class BottledGhostsApp(App[None]):
         await self.refresh_modules()
         await self.refresh_configuration()
         await self.refresh_audit()
+        await self.refresh_ignore_rules()
 
     async def refresh_dashboard(self) -> None:
         if self.db is None:
@@ -276,6 +304,7 @@ class BottledGhostsApp(App[None]):
             await self.show_logs(row_id)
             await self.refresh_modules()
             await self.refresh_configuration()
+            await self.refresh_ignore_rules()
         elif event.data_table.id == "sediment":
             row_id = int(str(event.row_key.value))
             self.selected_candidate_id = row_id
@@ -291,6 +320,8 @@ class BottledGhostsApp(App[None]):
             self.show_log_result(int(str(event.row_key.value)))
         elif event.data_table.id == "audit-list":
             self.show_audit_event(str(event.row_key.value))
+        elif event.data_table.id == "ignore-list":
+            self.selected_ignore_rule_id = int(str(event.row_key.value))
 
     async def show_logs(self, bottle_id: int) -> None:
         if self.db is None:
@@ -410,6 +441,10 @@ class BottledGhostsApp(App[None]):
             self.action_new_configuration()
         elif event.button.id == "save-module-settings":
             await self.action_save_module_settings()
+        elif event.button.id == "add-ignore-rule":
+            await self.action_add_ignore_rule()
+        elif event.button.id == "delete-ignore-rule":
+            await self.action_delete_ignore_rule()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "log-search-query":
@@ -618,6 +653,7 @@ class BottledGhostsApp(App[None]):
             "config-nick": settings.nick,
             "config-username": settings.username,
             "config-realname": settings.realname,
+            "config-user-modes": settings.user_modes,
             "config-channels": ",".join(settings.channels),
             "config-endpoint": settings.endpoint,
             "config-model": settings.model,
@@ -647,6 +683,7 @@ class BottledGhostsApp(App[None]):
             tls=self.query_one("#config-tls", Checkbox).value,
             nick=value("config-nick"), username=value("config-username"),
             realname=value("config-realname"),
+            user_modes=value("config-user-modes"),
             channels=[item.strip() for item in value("config-channels").split(",")
                       if item.strip()],
             endpoint=value("config-endpoint"), model=value("config-model"),
@@ -673,6 +710,7 @@ class BottledGhostsApp(App[None]):
                         network=settings.network, host=settings.host, port=settings.port,
                         tls=settings.tls, nick=settings.nick, username=settings.username,
                         realname=settings.realname, channels=settings.channels,
+                        user_modes=settings.user_modes,
                     ),
                     llm=LLMProfile(
                         endpoint=settings.endpoint, model=settings.model,
@@ -705,6 +743,7 @@ class BottledGhostsApp(App[None]):
             "config-name": "", "config-soul": "", "config-network": "",
             "config-host": "", "config-port": "6697", "config-nick": "",
             "config-username": "", "config-realname": "", "config-channels": "",
+            "config-user-modes": "",
             "config-endpoint": "", "config-model": "", "config-temperature": "0.7",
             "config-max-tokens": "160", "config-max-lines": "2",
             "config-max-chars": "400", "config-cooldown": "1.0",
@@ -743,6 +782,62 @@ class BottledGhostsApp(App[None]):
             f"{event.created_at} — {event.actor}\n"
             f"{event.category} / {event.action} / {event.target}\n\n{event.details or 'No details.'}"
         ))
+
+    async def refresh_ignore_rules(self) -> None:
+        table = self.query_one("#ignore-list", DataTable)
+        table.clear()
+        if self.db is None or self.selected_bottle_id is None:
+            self.selected_ignore_rule_id = None
+            return
+        rules = await list_ignore_rules(self.db, bottle_id=self.selected_bottle_id)
+        for rule in rules:
+            table.add_row(
+                str(rule.id), rule.network, rule.match_type, rule.match_value, rule.action,
+                key=str(rule.id),
+            )
+        self.selected_ignore_rule_id = rules[0].id if rules else None
+
+    async def action_add_ignore_rule(self) -> None:
+        if self.db is None or self.selected_bottle_id is None:
+            self.notify("No Bottle selected", severity="warning")
+            return
+        match_type = cast(
+            Literal["account", "hostmask", "nick"],
+            str(self.query_one("#ignore-match-type", Select).value),
+        )
+        action = cast(
+            Literal["drop", "no_response"],
+            str(self.query_one("#ignore-action", Select).value),
+        )
+        try:
+            rule_id, created = await add_ignore_rule(
+                self.db, bottle_id=self.selected_bottle_id,
+                network=self.query_one("#ignore-network", Input).value,
+                match_type=match_type,
+                match_value=self.query_one("#ignore-match-value", Input).value,
+                action=action, actor=self.actor,
+            )
+        except ValueError as error:
+            self.notify(str(error), severity="error")
+            return
+        self.notify(f"Added ignore rule {rule_id}" if created else "Ignore rule already exists")
+        await self.refresh_ignore_rules()
+        await self.refresh_audit()
+
+    async def action_delete_ignore_rule(self) -> None:
+        if (
+            self.db is None or self.selected_bottle_id is None
+            or self.selected_ignore_rule_id is None
+        ):
+            self.notify("No ignore rule selected", severity="warning")
+            return
+        rule_id = self.selected_ignore_rule_id
+        await delete_ignore_rule(
+            self.db, bottle_id=self.selected_bottle_id, rule_id=rule_id, actor=self.actor,
+        )
+        self.notify(f"Deleted ignore rule {rule_id}")
+        await self.refresh_ignore_rules()
+        await self.refresh_audit()
 
 
 def run_tui(database: Path, *, actor: str = "operator") -> None:

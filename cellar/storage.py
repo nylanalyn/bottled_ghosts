@@ -28,7 +28,7 @@ async def load_bottle(db: aiosqlite.Connection, bottle_id: int) -> Bottle:
     cursor = await db.execute(
         """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
                   i.realname, i.channels, i.password, i.sasl_username,
-                  i.sasl_password, l.endpoint, l.model,
+                  i.sasl_password, i.user_modes, l.endpoint, l.model,
                   l.api_key, l.temperature, l.max_tokens
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
            JOIN llm_profiles l ON l.id = b.llm_profile_id
@@ -52,7 +52,7 @@ def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
             tls=bool(row["tls"]), nick=row["nick"], username=row["username"],
             realname=row["realname"], channels=json.loads(row["channels"]),
             password=row["password"], sasl_username=row["sasl_username"],
-            sasl_password=row["sasl_password"]),
+            sasl_password=row["sasl_password"], user_modes=row["user_modes"]),
         llm=LLMProfile(endpoint=row["endpoint"], model=row["model"],
             api_key=row["api_key"], temperature=row["temperature"], max_tokens=row["max_tokens"]),
     )
@@ -78,7 +78,7 @@ async def load_enabled_bottles(db: aiosqlite.Connection) -> list[Bottle]:
     cursor = await db.execute(
         """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
                   i.realname, i.channels, i.password, i.sasl_username,
-                  i.sasl_password, l.endpoint, l.model,
+                  i.sasl_password, i.user_modes, l.endpoint, l.model,
                   l.api_key, l.temperature, l.max_tokens
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
            JOIN llm_profiles l ON l.id = b.llm_profile_id
@@ -106,11 +106,11 @@ async def create_bottle(
         irc_cursor = await db.execute(
             """INSERT INTO irc_profiles(
                    network, host, port, tls, nick, username, realname, channels, password,
-                   sasl_username, sasl_password
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   sasl_username, sasl_password, user_modes
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (irc.network, irc.host, irc.port, irc.tls, irc.nick, irc.username,
              irc.realname, json.dumps(irc.channels), irc.password,
-             irc.sasl_username, irc.sasl_password),
+             irc.sasl_username, irc.sasl_password, irc.user_modes),
         )
         llm_cursor = await db.execute(
             """INSERT INTO llm_profiles(
@@ -148,6 +148,7 @@ async def create_bottle(
                     "username": irc.username,
                     "realname": irc.realname,
                     "channels": irc.channels,
+                    "user_modes": irc.user_modes,
                     "endpoint": llm.endpoint,
                     "model": llm.model,
                     "temperature": llm.temperature,

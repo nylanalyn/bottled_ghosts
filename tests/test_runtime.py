@@ -3,6 +3,7 @@ import time
 
 import pytest
 
+from cellar.ignore_store import add_ignore_rule
 from cellar.models import (
     Bottle,
     ExtractedMemory,
@@ -140,6 +141,14 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
         listen_window_seconds=0.01, extract_memories=True,
     )
     bottle = await load_bottle(db, bottle_id)
+    await add_ignore_rule(
+        db, bottle_id=bottle_id, network="test", match_type="nick",
+        match_value="bob", action="drop", actor="test",
+    )
+    await add_ignore_rule(
+        db, bottle_id=bottle_id, network="test", match_type="account",
+        match_value="helperbot", action="no_response", actor="test",
+    )
     hook_counts = {"on_message": 0, "before_prompt": 0, "after_response": 0}
     prompts: list[list[dict[str, str]]] = []
     extracted_bodies: list[str] = []
@@ -161,16 +170,20 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
 
         async def run(self) -> None:
             await self.handler(IncomingIRCMessage(
+                nick="bob", hostmask="bob@host", account=None,
+                target="#test", body="ghost: hard ignored",
+            ))
+            await self.handler(IncomingIRCMessage(
+                nick="helper", hostmask="bot@host", account="helperbot",
+                target="#test", body="ghost: soft context",
+            ))
+            await self.handler(IncomingIRCMessage(
                 nick="alice", hostmask="u@host", account=None,
                 target="#test", body="ghost: first line",
             ))
             await self.handler(IncomingIRCMessage(
                 nick="alice", hostmask="u@host", account=None,
                 target="#test", body="second line",
-            ))
-            await self.handler(IncomingIRCMessage(
-                nick="bob", hostmask="bob@host", account=None,
-                target="#test", body="unaddressed interjection",
             ))
             await asyncio.sleep(0.03)
 
@@ -200,6 +213,8 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
         assert hook_counts == {"on_message": 3, "before_prompt": 1, "after_response": 1}
         assert len(prompts) == 1
         assert "ghost: first line\nsecond line" in prompts[0][1]["content"]
+        assert "ghost: soft context" in prompts[0][1]["content"]
+        assert "hard ignored" not in prompts[0][1]["content"]
         assert extracted_bodies == ["ghost: first line\nsecond line"]
         assert sent == [("#test", "one reply")]
         source = await (await db.execute(
@@ -212,6 +227,11 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
                JOIN messages m ON m.id = s.message_id ORDER BY s.ordinal"""
         )).fetchall()
         assert [row[0] for row in provenance] == ["ghost: first line", "second line"]
+        logged_bodies = [row[0] for row in await (await db.execute(
+            "SELECT body FROM messages ORDER BY id"
+        )).fetchall()]
+        assert "ghost: hard ignored" not in logged_bodies
+        assert "ghost: soft context" in logged_bodies
     finally:
         await db.close()
 

@@ -48,6 +48,7 @@ def collect_configuration(
     nick = ask("Nickname", name)
     username = ask("Username", nick)
     realname = ask("Real name", name)
+    user_modes = ask("User modes (optional, e.g. +B)", "")
     channels = [item.strip() for item in ask("Channels (comma-separated)").split(",") if item.strip()]
     if not channels:
         raise ValueError("at least one IRC channel is required")
@@ -71,7 +72,8 @@ def collect_configuration(
 
     irc = IRCProfile(network=network, host=host, port=port, tls=tls, nick=nick,
                      username=username, realname=realname, channels=channels, password=password,
-                     sasl_username=sasl_username, sasl_password=sasl_password)
+                     sasl_username=sasl_username, sasl_password=sasl_password,
+                     user_modes=user_modes)
     llm = LLMProfile(endpoint=endpoint, model=model, api_key=api_key,
                      temperature=temperature, max_tokens=max_tokens)
     return (

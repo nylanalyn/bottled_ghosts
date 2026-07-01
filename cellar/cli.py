@@ -8,6 +8,7 @@ from pathlib import Path
 from cellar.configure import ask, collect_configuration
 from cellar.dream_store import list_dreams
 from cellar.dreams import run_dream
+from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
 from cellar.runtime import run_bottle, run_bottles
 from cellar.memory_store import (
     approve_memory_candidate,
@@ -169,6 +170,22 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"Updated {args.module_name} settings for Bottle {args.bottle_id}; "
                   "reconnect to apply")
+        elif args.command == "ignore-list":
+            for rule in await list_ignore_rules(db, bottle_id=args.bottle_id):
+                print(f"{rule.id}\t{rule.network}\t{rule.match_type}\t"
+                      f"{rule.match_value}\t{rule.action}")
+        elif args.command == "ignore-add":
+            rule_id, created = await add_ignore_rule(
+                db, bottle_id=args.bottle_id, network=args.network,
+                match_type=args.match_type, match_value=args.match_value,
+                action=args.action, actor=args.actor,
+            )
+            print(f"{'Added' if created else 'Existing'} ignore rule {rule_id}")
+        elif args.command == "ignore-delete":
+            await delete_ignore_rule(
+                db, bottle_id=args.bottle_id, rule_id=args.rule_id, actor=args.actor,
+            )
+            print(f"Deleted ignore rule {args.rule_id}")
         elif args.command == "dream":
             summary = await run_dream(
                 db, bottle=await load_bottle(db, args.bottle_id), hours=args.hours,
@@ -270,6 +287,21 @@ def main() -> None:
     module_settings_parser.add_argument("module_name")
     module_settings_parser.add_argument("settings_json")
     module_settings_parser.add_argument("--actor", default="operator")
+    ignore_list = commands.add_parser("ignore-list", help="list a Bottle's ignore rules")
+    ignore_list.add_argument("bottle_id", type=int)
+    ignore_add = commands.add_parser("ignore-add", help="add an audited IRC ignore rule")
+    ignore_add.add_argument("bottle_id", type=int)
+    ignore_add.add_argument("network")
+    ignore_add.add_argument("match_type", choices=("account", "hostmask", "nick"))
+    ignore_add.add_argument("match_value")
+    ignore_add.add_argument("action", choices=("drop", "no_response"))
+    ignore_add.add_argument("--actor", default="operator")
+    ignore_delete = commands.add_parser(
+        "ignore-delete", help="delete an audited IRC ignore rule"
+    )
+    ignore_delete.add_argument("bottle_id", type=int)
+    ignore_delete.add_argument("rule_id", type=int)
+    ignore_delete.add_argument("--actor", default="operator")
     dream_parser = commands.add_parser("dream", help="summarize one Bottle's recent activity")
     dream_parser.add_argument("bottle_id", type=int)
     dream_parser.add_argument("--hours", type=int, default=24)

@@ -167,6 +167,14 @@ class IRCClient:
                     raise RuntimeError(f"SASL authentication failed (IRC {numeric})")
                 if numeric == "001":
                     logger.info("IRC registration complete as %s", self.profile.nick)
+                    if self.profile.user_modes:
+                        await self.send_raw(
+                            f"MODE {self.profile.nick} {self.profile.user_modes}"
+                        )
+                        logger.info(
+                            "setting user modes %s on %s",
+                            self.profile.user_modes, self.profile.nick,
+                        )
                     for channel in self.profile.channels:
                         await self.send_raw(f"JOIN {channel}")
                         logger.info("joining %s", channel)

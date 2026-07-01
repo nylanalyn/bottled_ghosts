@@ -200,6 +200,7 @@ Fields:
 * password
 * sasl_username
 * sasl_password
+* user_modes
 
 ### llm_profiles
 
@@ -224,6 +225,32 @@ Fields:
 * module_name
 * enabled
 * settings_json
+
+### irc_ignore_rules
+
+Per-Bottle IRC identity rules enforced before response selection.
+
+Fields:
+
+* id
+* bot_id
+* network
+* match_type (`account`, `hostmask`, or `nick`)
+* match_value
+* action (`drop` or `no_response`)
+* created_at
+
+### ambient_chat_state
+
+Structured persistent state for the optional ambient-chat module.
+
+Fields:
+
+* bot_id
+* network
+* channel
+* eligible_lines_seen
+* next_trigger_line
 
 ### users
 
@@ -335,19 +362,63 @@ Records each applied migration version and timestamp.
 Incoming message:
 
 1. IRC receives message
-2. Store raw message in SQLite
-3. Resolve user UUID
-4. Run `on_message` module hooks
-5. If not addressed to this bot: stop here
-6. Start or extend the listening window for this (channel, nick) pair
-7. When the window expires: retrieve relevant memory
-8. Run `before_prompt` module hooks
-9. Build prompt from accumulated window messages
-10. Call LLM
-11. Sanitize output
-12. Run `after_response` module hooks
-13. Send reply
-14. Extract candidate memories
+2. Match runtime ignore rules against the raw IRC identity
+3. If a `drop` rule matches: stop without logging, resolving, or running hooks
+4. Resolve user UUID
+5. Store raw message in SQLite
+6. Run `on_message` module hooks with response eligibility
+7. If a `no_response` rule matches: keep the message as context but do not open a response window
+8. If addressed or an enabled module explicitly requests a response: start or extend a window
+9. When the window expires: retrieve relevant memory
+10. Run `before_prompt` module hooks
+11. Build prompt from accumulated window messages
+12. Call LLM
+13. Sanitize output
+14. Run `after_response` module hooks
+15. Send reply
+16. Extract candidate memories
+
+The runtime is the final authority on response eligibility. Prompts and modules
+cannot override an ignore rule.
+
+---
+
+# IRC User Modes
+
+Each IRC profile may define a normalized user-mode string such as `+B` or `+Bi`.
+After registration succeeds (`001`) and before joining channels, the runtime sends:
+
+`MODE <current-nick> <configured-modes>`
+
+Modes are per Bottle and operator-configurable through CLI and TUI. Empty means
+no explicit mode command. Mode configuration is audited like other non-secret
+IRC settings. Invalid whitespace or command separators are rejected before
+storage so the field cannot inject additional IRC protocol lines.
+
+---
+
+# Ignore Rules
+
+Ignore rules are per Bottle because different characters may be allowed to
+interact with different speakers. Rules use exact identity matching, with IRC
+account names preferred for services-authenticated users. Nick and hostmask are
+available when no stable account exists.
+
+Two actions exist:
+
+* `drop`: the Bottle does not log, resolve, retrieve, or run module hooks for the
+  message. From that Bottle's perspective, the message did not occur.
+* `no_response`: the message is logged and may appear in later channel context,
+  but it cannot start or extend a listening window and cannot directly trigger
+  an ambient response.
+
+If multiple rules match, `drop` wins. Ignore matching occurs in runtime code,
+never through prompt instructions. Rules and their mutations are stored in
+SQLite and recorded in the configuration audit trail.
+
+The expected use for other bots is `no_response`: their messages remain useful
+channel context without causing bot-to-bot reply loops. `drop` is reserved for
+content that should not enter this Bottle's logs or context at all.
 
 ---
 
@@ -508,6 +579,34 @@ Modules must be stateless or persist only via database.
 
 No module may store canonical state in local files.
 
+## Ambient Chat Module
+
+`ambient_chat` is an optional per-Bottle module. It allows a character to speak
+occasionally without a direct mention while keeping response authority in the
+runtime.
+
+Default settings:
+
+* minimum eligible lines: 20
+* maximum eligible lines: 40
+* channel messages only; private messages never trigger ambient chat
+
+For each `(bot_id, network, channel)`, the module stores an eligible-line counter
+and a randomly selected next threshold in `ambient_chat_state`. The threshold is
+chosen inclusively between the configured minimum and maximum and persisted so a
+restart does not reroll or forget progress.
+
+Only visible, response-eligible messages count. Messages matched by either ignore
+level, the Bottle's own messages, and messages from `no_response` identities do
+not advance or trigger the counter. Any reply by the Bottle resets the counter
+and chooses the next threshold, preventing an ambient response immediately after
+an addressed conversation.
+
+When the threshold is reached, the module requests a normal listening window for
+the current eligible message. Prompt construction, sanitization, cooldowns, and
+memory behavior remain identical to addressed replies. Modules may request a
+response but cannot send directly or bypass runtime ignore/flood controls.
+
 ---
 
 # Output Sanitization
@@ -649,3 +748,17 @@ Deliverables:
 ## v1.0
 
 Full TUI
+
+## v1.1
+
+IRC participation controls
+
+Deliverables:
+
+* configurable per-Bottle IRC user modes
+* runtime-enforced `drop` and `no_response` identity rules
+* CLI and TUI management for ignore rules
+* optional `ambient_chat` module with persisted 20–40-line random thresholds
+* response-request module contract with runtime eligibility enforcement
+* regression coverage for bot-loop prevention, hard-ignore invisibility, mode
+  negotiation, threshold persistence, and flood-safe ambient replies

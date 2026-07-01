@@ -8,6 +8,7 @@ import aiosqlite
 
 from cellar.irc import IRCClient, irc_casefold, mentions_nick
 from cellar.identity import resolve_user
+from cellar.ignore_store import matching_ignore_action
 from cellar.listening import ListeningWindowManager
 from cellar.llm import complete
 from cellar.memory import extract_candidates
@@ -114,6 +115,12 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
 
     async def on_message(message: IncomingIRCMessage) -> None:
         async with database_lock:
+            ignore_action = await matching_ignore_action(
+                db, bottle_id=bottle.id, network=bottle.irc.network, identity=message,
+            )
+            if ignore_action == "drop":
+                logger.info("dropping ignored message from %s", message.nick)
+                return
             user_id = await resolve_user(db, network=bottle.irc.network, identity=message)
             direct_message = irc_casefold(message.target) == irc_casefold(bottle.irc.nick)
             conversation = f"@{user_id}" if direct_message else message.target
@@ -124,9 +131,11 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
             message_id = await log_message(db, incoming)
             module_context = ModuleContext(
                 db=db, bottle=bottle, message=message, user_id=user_id,
-                source_message_id=message_id,
+                source_message_id=message_id, response_allowed=ignore_action is None,
             )
             await modules.on_message(module_context)
+        if ignore_action == "no_response":
+            return
         key = (irc_casefold(conversation), user_id)
         addressed = direct_message or mentions_nick(message.body, bottle.irc.nick)
         if windows.contains(key) or addressed:

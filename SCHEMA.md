@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 014.
+The schema below reflects migration 015.
 
 ## schema_migrations
 
@@ -78,6 +78,10 @@ Stores per-Bottle module enablement and future module settings. Columns: `bot_id
 
 Stores the ambient-chat module's persisted per-channel progress. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `eligible_lines_seen INTEGER NOT NULL DEFAULT 0`, `next_trigger_line INTEGER NOT NULL`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
 
+## fishing_state
+
+Stores inspectable per-Bottle, per-channel fishing progress. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `phase TEXT NOT NULL`, `eligible_lines_seen INTEGER NOT NULL DEFAULT 0`, `next_cast_line INTEGER NOT NULL`, `cast_at INTEGER`, `reel_after INTEGER`, `command_sent_at INTEGER`, `banned_until INTEGER`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Unix timestamps are used for game deadlines. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `fishing_state_due_idx(bot_id, network, phase, reel_after, banned_until)`. Allowed phases are `idle`, `awaiting_cast`, `fishing`, `awaiting_reel`, `awaiting_dynamite`, and `banned`.
+
 ## summaries
 
 Stores Bottle dream summaries with explicit coverage periods. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `period_start TEXT NOT NULL`, `period_end TEXT NOT NULL`, `summary TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `summaries_bot_period_idx(bot_id, period_end DESC, id DESC)`.
@@ -102,3 +106,4 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 - 012: Add secret-free old and new values to configuration audit events.
 - 013: Add per-profile IRC user modes and runtime-enforced identity ignore rules.
 - 014: Add persisted per-channel state for the optional ambient-chat module.
+- 015: Add persisted per-channel state and deadlines for the optional fishing module.

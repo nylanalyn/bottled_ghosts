@@ -7,6 +7,7 @@ import aiosqlite
 from cellar.module_api import ModuleContract, ModuleRunner
 from modules.channel_context import Module as ChannelContextModule
 from modules.ambient_chat import Module as AmbientChatModule
+from modules.fishing import Module as FishingModule
 
 logger = logging.getLogger(__name__)
 ModuleFactory = Callable[[], ModuleContract]
@@ -14,6 +15,7 @@ ModuleFactory = Callable[[], ModuleContract]
 REGISTRY: tuple[tuple[str, ModuleFactory], ...] = (
     ("ambient_chat", AmbientChatModule),
     ("channel_context", ChannelContextModule),
+    ("fishing", FishingModule),
 )
 
 

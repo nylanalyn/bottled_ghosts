@@ -9,6 +9,13 @@ from cellar.models import Bottle, IncomingIRCMessage
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ModuleCommand:
+    """A runtime-sanitized IRC command requested by a module."""
+
+    body: str
+
+
 @dataclass
 class ModuleContext:
     db: aiosqlite.Connection
@@ -21,6 +28,7 @@ class ModuleContext:
     response_reason: Literal["addressed", "ambient"] = "addressed"
     module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
     prompt_sections: list[str] = field(default_factory=list)
+    commands: list[ModuleCommand] = field(default_factory=list)
     response: str | None = None
 
 

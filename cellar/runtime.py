@@ -15,7 +15,7 @@ from cellar.memory import extract_candidates
 from cellar.memory_store import approved_memory_texts, store_memory_candidates
 from cellar.dream_store import recent_dream_texts
 from cellar.models import Bottle, IRCMessage, IncomingIRCMessage
-from cellar.module_api import ModuleContext
+from cellar.module_api import ModuleCommand, ModuleContext
 from cellar.module_loader import load_modules
 from cellar.prompt import build_prompt, read_soul
 from cellar.safety import Cooldown, sanitize
@@ -117,6 +117,26 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
         bottle.listen_window_seconds, fire_window
     )
 
+    async def send_module_commands(
+        commands: list[ModuleCommand], *, target: str, channel: str,
+    ) -> None:
+        # A single incoming event may cause at most one module command. This keeps
+        # module bugs from becoming IRC floods even when several modules are active.
+        for command in commands[:1]:
+            lines = sanitize(command.body, max_lines=1, max_chars=bottle.max_chars)
+            if not lines or not lines[0].startswith("!"):
+                logger.warning("discarding invalid module command")
+                continue
+            await cooldown.wait()
+            await client.send_message(target, lines[0])
+            async with database_lock:
+                await log_message(
+                    db, IRCMessage(
+                        network=bottle.irc.network, channel=channel,
+                        speaker=bottle.irc.nick, body=lines[0], bot_id=bottle.id,
+                    ),
+                )
+
     async def on_message(message: IncomingIRCMessage) -> None:
         async with database_lock:
             ignore_action = await matching_ignore_action(
@@ -138,6 +158,11 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
                 source_message_id=message_id, response_allowed=ignore_action is None,
             )
             await modules.on_message(module_context)
+            commands = list(module_context.commands)
+        if commands:
+            await send_module_commands(
+                commands, target=message.target, channel=conversation,
+            )
         if ignore_action == "no_response":
             return
         key = (irc_casefold(conversation), user_id)

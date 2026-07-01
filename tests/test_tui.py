@@ -125,7 +125,7 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
         await app.action_save_configuration()
         await pilot.pause()
         assert app.query_one("#bottles", DataTable).row_count == 2
-        assert app.query_one("#audit-list", DataTable).row_count == 5
+        assert app.query_one("#audit-list", DataTable).row_count == 9
 
     db = await open_database(database)
     try:
@@ -163,7 +163,11 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
         assert tuple(bottle_state) == (0, 1, "mossy")
         assert tuple(model) == ("new-model",)
         assert [tuple(row) for row in configuration_events] == [
+            ("operator", "created"),
+            ("tui-test", "extract_memories"),
+            ("tui-test", "module:channel_context:enabled"),
             ("tui-test", "module:channel_context:settings"),
+            ("tui-test", "enabled"),
             ("tui-test", "model,name"),
             ("tui-test", "created"),
         ]

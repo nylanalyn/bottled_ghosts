@@ -64,6 +64,7 @@ async def async_main(args: argparse.Namespace) -> None:
                 db, name=name, soul_prompt_path=soul, irc=irc, llm=llm,
                 max_lines=max_lines, max_chars=max_chars, cooldown_seconds=cooldown,
                 listen_window_seconds=listen_window, extract_memories=extract_memories,
+                actor=args.actor,
             )
             print(f"Created Bottle {created_id}: {name}")
         elif args.command == "set-sasl":
@@ -90,12 +91,16 @@ async def async_main(args: argparse.Namespace) -> None:
             print(f"Updated IRC server password for Bottle {args.bottle_id}")
         elif args.command == "memory-extraction":
             enabled = args_enabled(args.state)
-            await set_memory_extraction(db, bottle_id=args.bottle_id, enabled=enabled)
+            await set_memory_extraction(
+                db, bottle_id=args.bottle_id, enabled=enabled, actor=args.actor,
+            )
             print(f"Memory extraction {'enabled' if enabled else 'disabled'} "
                   f"for Bottle {args.bottle_id}")
         elif args.command == "bottle-toggle":
             enabled = args_enabled(args.state)
-            await set_bottle_enabled(db, bottle_id=args.bottle_id, enabled=enabled)
+            await set_bottle_enabled(
+                db, bottle_id=args.bottle_id, enabled=enabled, actor=args.actor,
+            )
             print(f"Bottle {args.bottle_id} {'enabled' if enabled else 'disabled'}")
         elif args.command == "sediment-list":
             for candidate in await list_memory_candidates(db, status=args.status):
@@ -148,6 +153,7 @@ async def async_main(args: argparse.Namespace) -> None:
             enabled = args_enabled(args.state)
             await set_module_enabled(
                 db, bottle_id=args.bottle_id, module_name=args.module_name, enabled=enabled,
+                actor=args.actor,
             )
             print(f"{args.module_name} {'enabled' if enabled else 'disabled'} "
                   f"for Bottle {args.bottle_id}; reconnect to apply")
@@ -200,7 +206,8 @@ def main() -> None:
     parser.add_argument("--database", type=Path, default=Path("spirits.db"))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("migrate", help="apply pending database migrations")
-    commands.add_parser("configure", help="interactively create a Bottle")
+    configure_parser = commands.add_parser("configure", help="interactively create a Bottle")
+    configure_parser.add_argument("--actor", default="operator")
     commands.add_parser("list", help="list configured Bottles")
     commands.add_parser("run-all", help="run all enabled Bottles")
     sasl_parser = commands.add_parser("set-sasl", help="set SASL credentials for a Bottle")
@@ -219,11 +226,13 @@ def main() -> None:
     )
     memory_parser.add_argument("bottle_id", type=int)
     memory_parser.add_argument("state", choices=("on", "off"))
+    memory_parser.add_argument("--actor", default="operator")
     bottle_toggle = commands.add_parser(
         "bottle-toggle", help="include or exclude a Bottle from run-all"
     )
     bottle_toggle.add_argument("bottle_id", type=int)
     bottle_toggle.add_argument("state", choices=("on", "off"))
+    bottle_toggle.add_argument("--actor", default="operator")
     sediment_list = commands.add_parser("sediment-list", help="list memory candidates")
     sediment_list.add_argument("--status", choices=("pending", "approved", "rejected"),
                                default="pending")
@@ -253,6 +262,7 @@ def main() -> None:
     module_toggle.add_argument("bottle_id", type=int)
     module_toggle.add_argument("module_name")
     module_toggle.add_argument("state", choices=("on", "off"))
+    module_toggle.add_argument("--actor", default="operator")
     module_settings_parser = commands.add_parser(
         "module-settings", help="replace a module's JSON settings"
     )

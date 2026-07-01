@@ -38,10 +38,18 @@ async def test_migration_configuration_and_logging(tmp_path) -> None:
         summaries = await list_bottles(db)
         assert [(item.id, item.name, item.enabled) for item in summaries] == [(1, "test", True)]
         assert [item.id for item in await load_enabled_bottles(db)] == [bottle_id]
-        await set_sasl_credentials(db, bottle_id=bottle_id, username="account", password="secret")
-        await set_llm_api_key(
+        assert await set_sasl_credentials(
+            db, bottle_id=bottle_id, username="account", password="secret"
+        ) is True
+        assert await set_sasl_credentials(
+            db, bottle_id=bottle_id, username="account", password="secret"
+        ) is False
+        assert await set_llm_api_key(
             db, bottle_id=bottle_id, api_key="api-secret", actor="test-operator"
-        )
+        ) is True
+        assert await set_llm_api_key(
+            db, bottle_id=bottle_id, api_key="api-secret", actor="test-operator"
+        ) is False
         await set_server_password(
             db, bottle_id=bottle_id, password="server-secret", actor="test-operator"
         )
@@ -51,9 +59,14 @@ async def test_migration_configuration_and_logging(tmp_path) -> None:
         assert bottle.irc.password == "server-secret"
         assert bottle.llm.api_key == "api-secret"
         events = await (await db.execute(
-            "SELECT changed_fields FROM configuration_events ORDER BY id"
+            "SELECT changed_fields, old_value, new_value FROM configuration_events ORDER BY id"
         )).fetchall()
-        assert [row[0] for row in events] == ["api_key", "server_password"]
+        assert [row[0] for row in events] == [
+            "created", "sasl_credentials", "api_key", "server_password",
+        ]
+        assert "secret" not in "".join(
+            str(value) for row in events for value in (row["old_value"], row["new_value"])
+        )
 
         message = IRCMessage(network="local", channel="#test", speaker="alice", body="hi", bot_id=1)
         await log_message(db, message)

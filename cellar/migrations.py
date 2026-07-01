@@ -287,10 +287,19 @@ async def migration_011(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_012(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        ALTER TABLE configuration_events ADD COLUMN old_value TEXT;
+        ALTER TABLE configuration_events ADD COLUMN new_value TEXT;
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
-    migration_011,
+    migration_011, migration_012,
 )
 
 

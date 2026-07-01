@@ -61,6 +61,10 @@ async def save_bottle_settings(
     )
     if not changed:
         return False
+    current_values = current.model_dump(mode="json")
+    new_values = settings.model_dump(mode="json")
+    old_audit = {field: current_values[field] for field in changed}
+    new_audit = {field: new_values[field] for field in changed}
     try:
         await db.execute("BEGIN IMMEDIATE")
         await db.execute(
@@ -85,8 +89,11 @@ async def save_bottle_settings(
              settings.max_tokens, settings.id),
         )
         await db.execute(
-            """INSERT INTO configuration_events(bot_id, actor, changed_fields)
-               VALUES (?, ?, ?)""", (settings.id, actor, ",".join(changed)),
+            """INSERT INTO configuration_events(
+                   bot_id, actor, changed_fields, old_value, new_value
+               ) VALUES (?, ?, ?, ?, ?)""",
+            (settings.id, actor, ",".join(changed),
+             json.dumps(old_audit, sort_keys=True), json.dumps(new_audit, sort_keys=True)),
         )
         await db.commit()
     except Exception:

@@ -93,7 +93,11 @@ async def dashboard_audit_events(
                UNION ALL
                SELECT 'configuration-' || id, created_at, actor,
                       'configuration', 'change', 'Bottle ' || bot_id,
-                      'changed: ' || changed_fields
+                      'changed: ' || changed_fields ||
+                      CASE WHEN old_value IS NOT NULL OR new_value IS NOT NULL
+                           THEN ' | ' || COALESCE(old_value, '(none)') ||
+                                ' -> ' || COALESCE(new_value, '(none)')
+                           ELSE '' END
                FROM configuration_events
            ) ORDER BY created_at DESC, event_key DESC LIMIT ?""", (limit,),
     )

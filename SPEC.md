@@ -550,6 +550,10 @@ Starting and stopping a Bottle is always an explicit operator action. Closing th
 TUI stops any Bottle tasks launched by that TUI. Configuration changes never
 implicitly restart a running Bottle.
 
+All persistent configuration mutations append a secret-free audit event with the
+operator identity, changed field, and old/new non-secret values. No-op updates do
+not create audit events.
+
 ## Bottle Screen
 
 Sections:

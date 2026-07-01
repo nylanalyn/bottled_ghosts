@@ -467,7 +467,7 @@ class BottledGhostsApp(App[None]):
         bottles = await dashboard_bottles(self.db)
         bottle = next(item for item in bottles if item.id == self.selected_bottle_id)
         await set_bottle_enabled(
-            self.db, bottle_id=bottle.id, enabled=not bottle.enabled,
+            self.db, bottle_id=bottle.id, enabled=not bottle.enabled, actor=self.actor,
         )
         self.notify(f"Bottle {bottle.id} {'disabled' if bottle.enabled else 'enabled'}")
         await self.refresh_dashboard()
@@ -480,6 +480,7 @@ class BottledGhostsApp(App[None]):
         bottle = next(item for item in bottles if item.id == self.selected_bottle_id)
         await set_memory_extraction(
             self.db, bottle_id=bottle.id, enabled=not bottle.extract_memories,
+            actor=self.actor,
         )
         self.notify(
             f"Memory extraction {'disabled' if bottle.extract_memories else 'enabled'} "
@@ -495,7 +496,7 @@ class BottledGhostsApp(App[None]):
         enabled = not states.get(self.selected_module_name, False)
         await set_module_enabled(
             self.db, bottle_id=self.selected_bottle_id,
-            module_name=self.selected_module_name, enabled=enabled,
+            module_name=self.selected_module_name, enabled=enabled, actor=self.actor,
         )
         self.notify(f"{self.selected_module_name} {'enabled' if enabled else 'disabled'}; "
                     "reconnect to apply")

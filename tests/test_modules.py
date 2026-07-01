@@ -72,9 +72,13 @@ async def test_enabled_module_loads_from_sqlite(tmp_path) -> None:
             db, name=configured.name, soul_prompt_path=configured.soul_prompt_path,
             irc=configured.irc, llm=configured.llm,
         )
-        await set_module_enabled(
+        changed = await set_module_enabled(
             db, bottle_id=bottle_id, module_name="channel_context", enabled=True,
         )
+        assert changed is True
+        assert await set_module_enabled(
+            db, bottle_id=bottle_id, module_name="channel_context", enabled=True,
+        ) is False
         assert await module_states(db, bottle_id=bottle_id) == {"channel_context": True}
         runner = await load_modules(db, bottle_id=bottle_id)
         assert [type(module).__module__ for module in runner.modules] == [
@@ -83,6 +87,10 @@ async def test_enabled_module_loads_from_sqlite(tmp_path) -> None:
         await set_module_settings(
             db, bottle_id=bottle_id, module_name="channel_context",
             settings={"label": "quiet room", "history": 5}, actor="test-operator",
+        )
+        await set_module_settings(
+            db, bottle_id=bottle_id, module_name="channel_context",
+            settings={"history": 5, "label": "quiet room"}, actor="test-operator",
         )
         assert await module_settings(db, bottle_id=bottle_id) == {
             "channel_context": {"history": 5, "label": "quiet room"}
@@ -99,10 +107,17 @@ async def test_enabled_module_loads_from_sqlite(tmp_path) -> None:
             "channel_context": {"history": 5, "label": "quiet room"}
         }
         assert context.prompt_sections == ["IRC location: quiet room"]
-        event = await (await db.execute(
-            "SELECT actor, changed_fields FROM configuration_events"
-        )).fetchone()
-        assert event is not None
-        assert tuple(event) == ("test-operator", "module:channel_context:settings")
+        events = list(await (await db.execute(
+            """SELECT actor, changed_fields, old_value, new_value
+               FROM configuration_events ORDER BY id"""
+        )).fetchall())
+        assert [tuple(event) for event in events] == [
+            ("operator", "created", None,
+             events[0]["new_value"]),
+            ("operator", "module:channel_context:enabled", "false", "true"),
+            ("test-operator", "module:channel_context:settings", "{}",
+             '{"history":5,"label":"quiet room"}'),
+        ]
+        assert '"name": "test"' in events[0]["new_value"]
     finally:
         await db.close()

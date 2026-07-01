@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 011.
+The schema below reflects migration 012.
 
 ## schema_migrations
 
@@ -76,7 +76,7 @@ Stores Bottle dream summaries with explicit coverage periods. Columns: `id INTEG
 
 ## configuration_events
 
-Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `actor TEXT NOT NULL`, `changed_fields TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Secret values are never recorded. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `configuration_events_bot_idx(bot_id, id DESC)`. The `configuration_events_no_update` and `configuration_events_no_delete` triggers enforce append-only storage.
+Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `actor TEXT NOT NULL`, `changed_fields TEXT NOT NULL`, `old_value TEXT`, `new_value TEXT`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Non-secret values are JSON-encoded when a change has structured detail; secret values are never recorded. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `configuration_events_bot_idx(bot_id, id DESC)`. The `configuration_events_no_update` and `configuration_events_no_delete` triggers enforce append-only storage.
 
 ## Migration history
 
@@ -91,3 +91,4 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 - 009: Add the per-Bottle listening-window duration.
 - 010: Add explicit temporary-memory expiry and expiry audit fields.
 - 011: Add ordered multi-message provenance for memory candidates.
+- 012: Add secret-free old and new values to configuration audit events.

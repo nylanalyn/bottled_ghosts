@@ -8,6 +8,7 @@ from cellar.storage import (
     list_bottles,
     log_message,
     open_database,
+    prune_messages,
     recent_messages,
     search_messages,
     search_logs,
@@ -97,5 +98,21 @@ async def test_migration_configuration_and_logging(tmp_path) -> None:
         assert [(result.id, result.speaker) for result in results] == [
             (searchable_id, "alice")
         ]
+        await db.execute(
+            "UPDATE messages SET timestamp = '2000-01-01 00:00:00' WHERE id = ?",
+            (searchable_id,),
+        )
+        await db.commit()
+        assert await prune_messages(
+            db, older_than_days=30, actor="test-operator",
+        ) == 1
+        assert await search_logs(db, text="brass telescope") == []
+        maintenance = await (await db.execute(
+            "SELECT actor, action, details FROM maintenance_events"
+        )).fetchone()
+        assert maintenance is not None
+        assert (maintenance["actor"], maintenance["action"]) == (
+            "test-operator", "messages:prune",
+        )
     finally:
         await db.close()

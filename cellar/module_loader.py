@@ -36,7 +36,7 @@ async def load_modules(db: aiosqlite.Connection, *, bottle_id: int) -> ModuleRun
         """SELECT module_name, settings_json FROM bot_modules
            WHERE bot_id = ? AND enabled = 1 ORDER BY module_name""", (bottle_id,),
     )
-    loaded: list[ModuleContract] = []
+    loaded: list[tuple[str, ModuleContract]] = []
     settings: dict[str, dict[str, object]] = {}
     for row in await cursor.fetchall():
         name = str(row["module_name"])
@@ -53,7 +53,7 @@ async def load_modules(db: aiosqlite.Connection, *, bottle_id: int) -> ModuleRun
             logger.exception("invalid settings for module %s on Bottle %d", name, bottle_id)
             settings[name] = {}
         try:
-            loaded.append(factory())
+            loaded.append((name, factory()))
         except Exception:
             logger.exception("failed to initialize module %s for Bottle %d", name, bottle_id)
     return ModuleRunner(loaded, settings)

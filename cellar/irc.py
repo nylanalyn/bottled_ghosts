@@ -12,6 +12,20 @@ logger = logging.getLogger(__name__)
 IRC_PAYLOAD_BYTES = 510
 IRC_NICK_CHARACTERS = r"A-Za-z0-9\-\[\]\\`_^{|}~"
 IRC_REGISTRATION_TIMEOUT_SECONDS = 30.0
+IRC_IDLE_TIMEOUT_SECONDS = 300.0
+IRC_PONG_TIMEOUT_SECONDS = 60.0
+IRC_FORMATTING_RE = re.compile(
+    r"\x03(?:\d{1,2}(?:,\d{1,2})?)?|\x04(?:[0-9A-Fa-f]{6}(?:,[0-9A-Fa-f]{6})?)?|"
+    r"[\x00-\x02\x05-\x08\x0b\x0c\x0e-\x1f\x7f]"
+)
+
+
+class IRCAuthenticationError(RuntimeError):
+    """Fatal authentication/configuration failure that should not reconnect rapidly."""
+
+
+class IRCNickCollisionError(ConnectionError):
+    """All configured nick choices are currently in use."""
 
 
 def irc_casefold(value: str) -> str:
@@ -58,6 +72,9 @@ def parse_privmsg(line: str) -> IncomingIRCMessage | None:
         return None
     nick, separator, hostmask = prefix.partition("!")
     account = tags.get("account")
+    if body.startswith("\x01") and body.endswith("\x01"):
+        return None
+    body = IRC_FORMATTING_RE.sub("", body)
     return IncomingIRCMessage(nick=nick, hostmask=hostmask if separator else None,
                               account=account if account and account != "*" else None,
                               target=parts[1], body=body)
@@ -113,6 +130,9 @@ class IRCClient:
         self.capabilities: set[str] = set()
         self.pending_capabilities: set[str] = set()
         self.sasl_authenticating = False
+        self.current_nick = profile.nick
+        self._nick_choices = [profile.nick, *profile.alternate_nicks]
+        self._nick_index = 0
         self.connection_state_handler: Callable[[bool], None] | None = None
 
     async def send_raw(self, line: str) -> None:
@@ -135,7 +155,7 @@ class IRCClient:
         username = self.profile.sasl_username
         password = self.profile.sasl_password
         if username is None or password is None:
-            raise RuntimeError("SASL credentials are incomplete")
+            raise IRCAuthenticationError("SASL credentials are incomplete")
         for chunk in sasl_plain_chunks(username, password):
             await self.send_raw(f"AUTHENTICATE {chunk}")
 
@@ -151,10 +171,25 @@ class IRCClient:
             if self.profile.password:
                 await self.send_raw(f"PASS {self.profile.password}")
             registered = False
-            while raw := await asyncio.wait_for(
-                reader.readline(),
-                timeout=None if registered else IRC_REGISTRATION_TIMEOUT_SECONDS,
-            ):
+            awaiting_pong = False
+            while True:
+                timeout = (
+                    IRC_PONG_TIMEOUT_SECONDS if awaiting_pong
+                    else IRC_IDLE_TIMEOUT_SECONDS if registered
+                    else IRC_REGISTRATION_TIMEOUT_SECONDS
+                )
+                try:
+                    raw = await asyncio.wait_for(reader.readline(), timeout=timeout)
+                except TimeoutError:
+                    if not registered:
+                        raise ConnectionError("IRC registration timed out") from None
+                    if awaiting_pong:
+                        raise ConnectionError("IRC keepalive PONG timed out") from None
+                    await self.send_raw("PING :bottled-ghosts-keepalive")
+                    awaiting_pong = True
+                    continue
+                if not raw:
+                    break
                 line = raw.decode(errors="replace").rstrip("\r\n")
                 command, params = parse_irc_command(line)
                 if command == "CAP":
@@ -164,13 +199,19 @@ class IRCClient:
                 if command == "PING":
                     await self.send_raw(f"PONG {' '.join(params)}")
                     continue
-                if " CAP " in line and " LS " in line:
-                    self.capabilities.update(capability_names(line.rsplit(" :", 1)[-1].split()))
-                    if " LS * :" in line:
+                if command == "PONG":
+                    awaiting_pong = False
+                    continue
+                cap_subcommand = params[1].upper() if command == "CAP" and len(params) > 1 else ""
+                if not registered and cap_subcommand == "LS":
+                    self.capabilities.update(capability_names(params[-1].split()))
+                    if len(params) > 2 and params[2] == "*":
                         continue
                     if self.profile.sasl_username:
                         if "sasl" not in self.capabilities:
-                            raise RuntimeError("IRC server does not advertise SASL")
+                            raise IRCAuthenticationError(
+                                "IRC server does not advertise SASL"
+                            )
                     if self.profile.sasl_username:
                         logger.info("requesting SASL PLAIN authentication")
                         self.pending_capabilities.add("sasl")
@@ -181,21 +222,23 @@ class IRCClient:
                         await self.send_raw(f"CAP REQ :{requested}")
                     else:
                         await self.send_raw("CAP END")
-                    await self.send_raw(f"NICK {self.profile.nick}")
+                    await self.send_raw(f"NICK {self.current_nick}")
                     await self.send_raw(
                         f"USER {self.profile.username} 0 * :{self.profile.realname}"
                     )
                     continue
-                if " CAP " in line and " NAK " in line:
-                    rejected = capability_names(line.rsplit(" :", 1)[-1].split())
+                if not registered and cap_subcommand == "NAK":
+                    rejected = capability_names(params[-1].split())
                     self.pending_capabilities.difference_update(rejected)
                     if self.profile.sasl_username and "sasl" in rejected:
-                        raise RuntimeError("IRC server rejected the SASL capability request")
+                        raise IRCAuthenticationError(
+                            "IRC server rejected the SASL capability request"
+                        )
                     if not self.pending_capabilities and not self.sasl_authenticating:
                         await self.send_raw("CAP END")
                     continue
-                if " CAP " in line and " ACK " in line:
-                    acknowledged = capability_names(line.rsplit(" :", 1)[-1].split())
+                if not registered and cap_subcommand == "ACK":
+                    acknowledged = capability_names(params[-1].split())
                     self.pending_capabilities.difference_update(acknowledged)
                     if "sasl" in acknowledged:
                         self.sasl_authenticating = True
@@ -214,19 +257,34 @@ class IRCClient:
                     await self.send_raw("CAP END")
                     continue
                 if numeric in {"904", "905", "906", "907"}:
-                    raise RuntimeError(f"SASL authentication failed (IRC {numeric})")
+                    raise IRCAuthenticationError(
+                        f"SASL authentication failed (IRC {numeric})"
+                    )
+                if numeric == "433" and not registered:
+                    self._nick_index += 1
+                    if self._nick_index >= len(self._nick_choices):
+                        raise IRCNickCollisionError(
+                            "all configured IRC nick choices are in use: "
+                            + ", ".join(self._nick_choices)
+                        )
+                    self.current_nick = self._nick_choices[self._nick_index]
+                    logger.warning("IRC nick in use; trying %s", self.current_nick)
+                    await self.send_raw(f"NICK {self.current_nick}")
+                    continue
                 if numeric == "001":
                     registered = True
+                    if params:
+                        self.current_nick = params[0]
                     if self.connection_state_handler is not None:
                         self.connection_state_handler(True)
-                    logger.info("IRC registration complete as %s", self.profile.nick)
+                    logger.info("IRC registration complete as %s", self.current_nick)
                     if self.profile.user_modes:
                         await self.send_raw(
-                            f"MODE {self.profile.nick} {self.profile.user_modes}"
+                            f"MODE {self.current_nick} {self.profile.user_modes}"
                         )
                         logger.info(
                             "setting user modes %s on %s",
-                            self.profile.user_modes, self.profile.nick,
+                            self.profile.user_modes, self.current_nick,
                         )
                     for channel in self.profile.channels:
                         await self.send_raw(f"JOIN {channel}")

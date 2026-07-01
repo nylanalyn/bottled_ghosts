@@ -38,6 +38,23 @@ async def test_account_merges_nick_changes_into_one_uuid(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_unverified_nick_does_not_inherit_account_identity(tmp_path) -> None:
+    db = await open_database(tmp_path / "nick-impersonation.db")
+    try:
+        owner = await resolve_user(
+            db, network="testnet",
+            identity=identity("aureate", account="aureate", hostmask="owner@host"),
+        )
+        impostor = await resolve_user(
+            db, network="testnet",
+            identity=identity("AUREATE", hostmask="stranger@elsewhere"),
+        )
+        assert impostor != owner
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
 async def test_explicit_uuid_merge_moves_identities(tmp_path) -> None:
     db = await open_database(tmp_path / "merge.db")
     try:

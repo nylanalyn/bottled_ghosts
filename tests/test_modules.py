@@ -58,9 +58,12 @@ async def test_module_failure_does_not_stop_later_modules(tmp_path, caplog) -> N
                                    target="#test", body="hello"),
         user_id="user", source_message_id=1,
     )
-    await ModuleRunner([BrokenModule(), WorkingModule()]).on_message(ctx)
-    assert ctx.prompt_sections == ["on_message continued"]
+    runner = ModuleRunner([BrokenModule(), WorkingModule()])
+    await runner.on_message(ctx)
+    await runner.on_message(ctx)
+    assert ctx.prompt_sections == ["on_message continued", "on_message continued"]
     assert "failed during on_message" in caplog.text
+    assert "disabled module BrokenModule" in caplog.text
 
 
 @pytest.mark.asyncio

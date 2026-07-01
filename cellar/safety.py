@@ -2,6 +2,8 @@ import asyncio
 import re
 import time
 
+from cellar.irc import truncate_utf8
+
 THINK_RE = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
 TAG_RE = re.compile(r"</?think\b[^>]*>", re.IGNORECASE)
 
@@ -19,9 +21,14 @@ def sanitize(text: str, *, max_lines: int, max_chars: int) -> list[str]:
     text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     lines: list[str] = []
     for raw in text.splitlines():
-        line = re.sub(r"[*_`~]", "", raw).strip().replace("\r", "")
+        tokens = raw.strip().replace("\r", "").split()
+        line = " ".join(
+            token if token.startswith(("http://", "https://"))
+            else re.sub(r"[*_`~]", "", token)
+            for token in tokens
+        )
         if line:
-            lines.append(line[:max_chars])
+            lines.append(truncate_utf8(line[:max_chars], max_chars))
         if len(lines) == max_lines:
             break
     return lines

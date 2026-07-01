@@ -48,6 +48,7 @@ class NightlyContext:
 class RuntimeState:
     irc_connected: bool = False
     database_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    failed_modules: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -68,11 +69,17 @@ class ModuleContract(Protocol):
 
 class ModuleRunner:
     def __init__(
-        self, modules: list[ModuleContract],
+        self, modules: list[ModuleContract] | list[tuple[str, ModuleContract]],
         settings: dict[str, dict[str, object]] | None = None,
     ) -> None:
-        self.modules = modules
+        self._named_modules: list[tuple[str, ModuleContract]] = [
+            item if isinstance(item, tuple) else (type(item).__name__, item)
+            for item in modules
+        ]
+        self.modules = [module for _name, module in self._named_modules]
         self.settings = settings or {}
+        self.disabled: set[str] = set()
+        self.runtime_state: RuntimeState | None = None
 
     async def on_message(self, ctx: ModuleContext) -> None:
         await self._run("on_message", ctx)
@@ -87,6 +94,7 @@ class ModuleRunner:
         await self._run("nightly", ctx)
 
     async def start(self, ctx: RuntimeContext) -> None:
+        self.runtime_state = ctx.state
         await self._run("start", ctx)
 
     async def stop(self, ctx: RuntimeContext) -> None:
@@ -97,8 +105,10 @@ class ModuleRunner:
         *, reverse: bool = False,
     ) -> None:
         ctx.module_settings = self.settings
-        modules = reversed(self.modules) if reverse else self.modules
-        for module in modules:
+        modules = reversed(self._named_modules) if reverse else self._named_modules
+        for name, module in modules:
+            if name in self.disabled and hook != "stop":
+                continue
             try:
                 callback = getattr(module, hook, None)
                 if callback is None:
@@ -106,3 +116,8 @@ class ModuleRunner:
                 await callback(ctx)
             except Exception:
                 logger.exception("module %s failed during %s", type(module).__name__, hook)
+                if hook != "stop":
+                    self.disabled.add(name)
+                    if self.runtime_state is not None:
+                        self.runtime_state.failed_modules[name] = hook
+                    logger.error("disabled module %s for the remainder of this run", name)

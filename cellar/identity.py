@@ -1,14 +1,29 @@
 from uuid import uuid4
+from dataclasses import dataclass
 
 import aiosqlite
 
 from cellar.models import IncomingIRCMessage
+from cellar.irc import irc_casefold
+
+
+@dataclass(frozen=True)
+class ResolvedUser:
+    user_id: str
+    confidence: float
 
 
 async def resolve_user(
     db: aiosqlite.Connection, *, network: str, identity: IncomingIRCMessage
 ) -> str:
     """Resolve strongest available IRC identity, creating a UUID when unknown."""
+    return (await resolve_user_identity(db, network=network, identity=identity)).user_id
+
+
+async def resolve_user_identity(
+    db: aiosqlite.Connection, *, network: str, identity: IncomingIRCMessage
+) -> ResolvedUser:
+    """Resolve an IRC identity and report the evidence confidence used."""
     try:
         await db.execute("BEGIN IMMEDIATE")
         row = None
@@ -27,19 +42,20 @@ async def resolve_user(
                 db,
                 """SELECT user_id FROM user_identities
                    WHERE network = ? AND hostmask = ? COLLATE NOCASE
+                     AND (? IS NOT NULL OR account IS NULL)
                    ORDER BY last_seen DESC LIMIT 1""",
-                (network, identity.hostmask),
+                (network, identity.hostmask, identity.account),
             )
             confidence = 0.8
         if row is None:
-            account_clause = "AND account IS NULL" if identity.account else ""
-            row = await _first(
-                db,
-                f"""SELECT user_id FROM user_identities
-                    WHERE network = ? AND nick = ? COLLATE NOCASE {account_clause}
-                    ORDER BY last_seen DESC LIMIT 1""",
-                (network, identity.nick),
-            )
+            candidates = await (await db.execute(
+                """SELECT user_id, nick, account FROM user_identities
+                   WHERE network = ? ORDER BY last_seen DESC""",
+                (network,),
+            )).fetchall()
+            row = next((candidate for candidate in candidates
+                        if irc_casefold(str(candidate["nick"])) == irc_casefold(identity.nick)
+                        and candidate["account"] is None), None)
             confidence = 0.5
 
         user_id = str(row["user_id"]) if row else str(uuid4())
@@ -72,7 +88,7 @@ async def resolve_user(
                 (user_id, network, identity.nick, identity.account, identity.hostmask, confidence),
             )
         await db.commit()
-        return user_id
+        return ResolvedUser(user_id=user_id, confidence=confidence)
     except Exception:
         await db.rollback()
         raise

@@ -377,9 +377,14 @@ class BottledGhostsApp(App[None]):
             self.notify("No pending candidate selected", severity="warning")
             return
         candidate_id = self.selected_candidate_id
-        memory_id = await approve_memory_candidate(
-            self.db, candidate_id=candidate_id, actor=self.actor,
-        )
+        try:
+            memory_id = await approve_memory_candidate(
+                self.db, candidate_id=candidate_id, actor=self.actor,
+            )
+        except (LookupError, ValueError) as error:
+            self.notify(str(error), severity="error")
+            await self.refresh_all()
+            return
         self.notify(f"Approved candidate {candidate_id} as memory {memory_id}")
         await self.refresh_all()
 
@@ -388,9 +393,14 @@ class BottledGhostsApp(App[None]):
             self.notify("No pending candidate selected", severity="warning")
             return
         candidate_id = self.selected_candidate_id
-        await reject_memory_candidate(
-            self.db, candidate_id=candidate_id, actor=self.actor,
-        )
+        try:
+            await reject_memory_candidate(
+                self.db, candidate_id=candidate_id, actor=self.actor,
+            )
+        except (LookupError, ValueError) as error:
+            self.notify(str(error), severity="error")
+            await self.refresh_all()
+            return
         self.notify(f"Rejected candidate {candidate_id}")
         await self.refresh_all()
 
@@ -705,7 +715,10 @@ class BottledGhostsApp(App[None]):
             self.notify("No Bottle selected", severity="warning")
             return
         try:
-            settings = self.form_settings(0 if self.creating_bottle else self.selected_bottle_id or 0)
+            bottle_id = 0 if self.creating_bottle else self.selected_bottle_id
+            if bottle_id is None:
+                raise ValueError("No Bottle selected")
+            settings = self.form_settings(bottle_id)
             if not settings.soul_prompt_path.is_file():
                 raise ValueError(f"soul prompt does not exist: {settings.soul_prompt_path}")
             if self.creating_bottle:

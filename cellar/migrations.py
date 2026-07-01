@@ -404,12 +404,57 @@ async def migration_017(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_018(db: aiosqlite.Connection) -> None:
+    await db.execute(
+        "ALTER TABLE irc_profiles ADD COLUMN alternate_nicks TEXT NOT NULL DEFAULT '[]'"
+    )
+
+
+async def migration_019(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE emergency_alert_state (
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            last_alert_at INTEGER NOT NULL,
+            PRIMARY KEY (bot_id, network, channel)
+        );
+        """
+    )
+
+
+async def migration_020(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE maintenance_events (
+            id INTEGER PRIMARY KEY,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            details TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TRIGGER maintenance_events_no_update
+        BEFORE UPDATE ON maintenance_events BEGIN
+            SELECT RAISE(ABORT, 'maintenance events are append-only');
+        END;
+        CREATE TRIGGER maintenance_events_no_delete
+        BEFORE DELETE ON maintenance_events BEGIN
+            SELECT RAISE(ABORT, 'maintenance events are append-only');
+        END;
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
     migration_011, migration_012, migration_013, migration_014, migration_015,
     migration_016,
     migration_017,
+    migration_018,
+    migration_019,
+    migration_020,
 )
 
 

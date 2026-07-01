@@ -5,8 +5,10 @@ from pydantic import ValidationError
 
 from cellar.irc import (
     IRCClient,
+    capability_names,
     irc_casefold,
     mentions_nick,
+    parse_irc_command,
     parse_privmsg,
     sasl_plain_chunks,
     truncate_utf8,
@@ -35,8 +37,25 @@ def test_ignore_other_commands() -> None:
     assert parse_privmsg("@malformed-tag-only") is None
 
 
+def test_parse_irc_command_accepts_optional_tags_and_prefix() -> None:
+    assert parse_irc_command(":server AUTHENTICATE +") == ("AUTHENTICATE", ["+"])
+    assert parse_irc_command("@time=now :server 903 ghost :success") == (
+        "903", ["ghost", "success"]
+    )
+    assert parse_irc_command("AUTHENTICATE :+") == ("AUTHENTICATE", ["+"])
+    assert parse_irc_command("PING :registration-token") == (
+        "PING", ["registration-token"]
+    )
+
+
+def test_capability_names_strip_values_and_modifiers() -> None:
+    assert capability_names([":sasl=PLAIN,EXTERNAL", "~account-tag", "-echo-message"]) == {
+        "sasl", "account-tag", "echo-message",
+    }
+
+
 def test_sasl_plain_payload() -> None:
-    expected = base64.b64encode(b"ghost\0ghost\0secret").decode()
+    expected = base64.b64encode(b"\0ghost\0secret").decode()
     assert sasl_plain_chunks("ghost", "secret") == [expected]
 
 
@@ -60,14 +79,13 @@ def test_user_modes_reject_protocol_injection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_capabilities_are_requested_separately(monkeypatch) -> None:
+async def test_capabilities_are_requested_together(monkeypatch) -> None:
     class Reader:
         def __init__(self) -> None:
             self.lines = iter([
                 b":server CAP ghost LS :sasl account-tag\r\n",
-                b":server CAP ghost ACK :account-tag\r\n",
-                b":server CAP ghost ACK :sasl\r\n",
-                b"AUTHENTICATE +\r\n",
+                b":server CAP ghost ACK :account-tag sasl=PLAIN\r\n",
+                b"AUTHENTICATE :+\r\n",
                 b":server 903 ghost :SASL successful\r\n",
                 b"",
             ])
@@ -112,9 +130,11 @@ async def test_capabilities_are_requested_separately(monkeypatch) -> None:
     with pytest.raises(ConnectionError):
         await client.run()
 
-    assert "CAP REQ :sasl" in writer.lines
-    assert "CAP REQ :account-tag" in writer.lines
-    assert "CAP REQ :sasl account-tag" not in writer.lines
+    assert "CAP REQ :account-tag sasl" in writer.lines
+    assert writer.lines.index("CAP REQ :account-tag sasl") < writer.lines.index("NICK ghost")
+    assert writer.lines.index("CAP REQ :account-tag sasl") < writer.lines.index(
+        "USER ghost 0 * :Ghost"
+    )
     assert writer.lines.count("CAP END") == 1
 
 

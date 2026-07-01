@@ -7,6 +7,7 @@ from pathlib import Path
 
 from cellar.configure import ask, collect_configuration
 from cellar.admin_store import set_admin_api_token
+from cellar.alias_store import add_alias, delete_alias, list_aliases
 from cellar.dream_store import list_dreams
 from cellar.dreams import run_dream
 from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
@@ -59,6 +60,19 @@ async def async_main(args: argparse.Namespace) -> None:
                 memory = "memory:on" if bottle.extract_memories else "memory:off"
                 print(f"{bottle.id}\t{state}\t{memory}\t{bottle.name}\t"
                       f"{bottle.nick}@{bottle.network}\t{channels}")
+        elif args.command == "aliases":
+            aliases = await list_aliases(db, bottle_id=args.bottle_id)
+            print("\n".join(aliases) if aliases else "No aliases configured.")
+        elif args.command == "alias-add":
+            changed = await add_alias(
+                db, bottle_id=args.bottle_id, alias=args.alias, actor=args.actor,
+            )
+            print("Alias added; reconnect to apply" if changed else "Alias already exists")
+        elif args.command == "alias-delete":
+            changed = await delete_alias(
+                db, bottle_id=args.bottle_id, alias=args.alias, actor=args.actor,
+            )
+            print("Alias deleted; reconnect to apply" if changed else "Alias not found")
         elif args.command == "configure":
             (name, soul, irc, llm, max_lines, max_chars, cooldown, listen_window,
              extract_memories) = collect_configuration()
@@ -235,6 +249,16 @@ def main() -> None:
     configure_parser = commands.add_parser("configure", help="interactively create a Bottle")
     configure_parser.add_argument("--actor", default="operator")
     commands.add_parser("list", help="list configured Bottles")
+    aliases_parser = commands.add_parser("aliases", help="list a Bottle's address aliases")
+    aliases_parser.add_argument("bottle_id", type=int)
+    alias_add = commands.add_parser("alias-add", help="add an address alias")
+    alias_add.add_argument("bottle_id", type=int)
+    alias_add.add_argument("alias")
+    alias_add.add_argument("--actor", default="operator")
+    alias_delete = commands.add_parser("alias-delete", help="delete an address alias")
+    alias_delete.add_argument("bottle_id", type=int)
+    alias_delete.add_argument("alias")
+    alias_delete.add_argument("--actor", default="operator")
     commands.add_parser("run-all", help="run all enabled Bottles")
     sasl_parser = commands.add_parser("set-sasl", help="set SASL credentials for a Bottle")
     sasl_parser.add_argument("bottle_id", type=int)

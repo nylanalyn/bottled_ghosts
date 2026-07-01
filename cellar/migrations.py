@@ -389,11 +389,27 @@ async def migration_016(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_017(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE bot_aliases (
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            alias TEXT NOT NULL,
+            alias_key TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (bot_id, alias_key)
+        );
+        CREATE INDEX bot_aliases_lookup_idx ON bot_aliases(bot_id, alias_key);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
     migration_011, migration_012, migration_013, migration_014, migration_015,
     migration_016,
+    migration_017,
 )
 
 

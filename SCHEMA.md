@@ -102,6 +102,10 @@ Stores inspectable outbound administration events. Columns: `id INTEGER PRIMARY 
 
 Stores the per-Bottle admin API bearer token. Columns: `bot_id INTEGER PRIMARY KEY`, `token TEXT NOT NULL`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Token values are never copied into audit rows.
 
+## bot_aliases
+
+Stores additional names that address a Bottle. Columns: `bot_id INTEGER NOT NULL`, `alias TEXT NOT NULL`, `alias_key TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, alias_key)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `bot_aliases_lookup_idx(bot_id, alias_key)`. `alias_key` uses IRC case folding so equivalent bracket and case variants cannot be duplicated.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -120,3 +124,4 @@ Stores the per-Bottle admin API bearer token. Columns: `bot_id INTEGER PRIMARY K
 - 014: Add persisted per-channel state for the optional ambient-chat module.
 - 015: Add persisted per-channel state and deadlines for the optional fishing module.
 - 016: Add persistent response control, outbound administration events, and admin API credentials.
+- 017: Add canonical per-Bottle address aliases.

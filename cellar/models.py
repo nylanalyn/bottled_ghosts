@@ -54,6 +54,11 @@ class Bottle(BaseModel):
     cooldown_seconds: float = Field(default=1.0, ge=0)
     listen_window_seconds: float = Field(default=8.0, gt=0)
     extract_memories: bool = False
+    aliases: list[str] = Field(default_factory=list)
+
+    @property
+    def address_names(self) -> tuple[str, ...]:
+        return (self.irc.nick, *self.aliases)
 
 
 class IRCMessage(BaseModel):

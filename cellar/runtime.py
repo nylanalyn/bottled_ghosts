@@ -7,7 +7,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from cellar.irc import IRCClient, irc_casefold, mentions_nick
+from cellar.irc import IRCClient, irc_casefold, mentions_any_nick
 from cellar.admin_store import response_enabled
 from cellar.identity import resolve_user
 from cellar.ignore_store import matching_ignore_action
@@ -180,7 +180,7 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
         if ignore_action == "no_response":
             return
         key = (irc_casefold(conversation), user_id)
-        addressed = direct_message or mentions_nick(message.body, bottle.irc.nick)
+        addressed = direct_message or mentions_any_nick(message.body, bottle.address_names)
         should_respond = windows.contains(key) or addressed or module_context.request_response
         should_monitor = not replies_enabled and module_context.monitor_when_silent
         if (replies_enabled and should_respond) or should_monitor:

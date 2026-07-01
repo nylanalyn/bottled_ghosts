@@ -188,6 +188,19 @@ must be the full URL of an OpenAI-compatible chat-completions endpoint. The bot
 logs all channel messages but only replies when its nickname appears in a
 message.
 
+Configure additional names that address a Bottle with exact IRC nickname
+boundaries:
+
+```bash
+bottled-ghosts alias-add BOT_ID fraud --actor aureate
+bottled-ghosts alias-add RUMI_BOT_ID rumi --actor aureate
+bottled-ghosts alias-add RUMI_BOT_ID aureate --actor aureate
+bottled-ghosts aliases RUMI_BOT_ID
+```
+
+Aliases affect normal replies, emergency monitoring, and modules that require
+the Bottle to be addressed. Reconnect after adding or deleting an alias.
+
 At runtime, connection, registration, SASL, channel join, generation, and send
 events are logged to the terminal. Credentials and raw LLM response bodies are
 never logged.

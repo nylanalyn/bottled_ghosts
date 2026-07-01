@@ -27,6 +27,10 @@ def mentions_nick(text: str, nick: str) -> bool:
     ) is not None
 
 
+def mentions_any_nick(text: str, names: tuple[str, ...] | list[str]) -> bool:
+    return any(mentions_nick(text, name) for name in names)
+
+
 def truncate_utf8(text: str, max_bytes: int) -> str:
     if max_bytes < 0:
         raise ValueError("UTF-8 byte limit cannot be negative")

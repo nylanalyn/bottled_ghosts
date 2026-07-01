@@ -1,7 +1,7 @@
 import re
 
 from cellar.admin_store import enqueue_admin_event
-from cellar.irc import irc_casefold, mentions_nick
+from cellar.irc import irc_casefold, mentions_any_nick
 from cellar.module_api import ModuleContext, NightlyContext, RuntimeContext
 
 URGENT_MARKER = re.compile(r"^\[URGENT:\s*([^\]\r\n]{1,200})\]", re.IGNORECASE)
@@ -16,7 +16,7 @@ class Module:
 
     async def on_message(self, ctx: ModuleContext) -> None:
         direct = irc_casefold(ctx.message.target) == irc_casefold(ctx.bottle.irc.nick)
-        if direct or mentions_nick(ctx.message.body, ctx.bottle.irc.nick):
+        if direct or mentions_any_nick(ctx.message.body, ctx.bottle.address_names):
             ctx.monitor_when_silent = True
 
     async def before_prompt(self, ctx: ModuleContext) -> None:

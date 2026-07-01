@@ -3,7 +3,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from cellar.irc import irc_casefold, mentions_nick
+from cellar.irc import irc_casefold, mentions_any_nick
 from cellar.module_api import ModuleCommand, ModuleContext, NightlyContext
 
 DEFAULT_MIN_CAST_LINES = 20
@@ -116,7 +116,7 @@ class Module:
     async def _handle_game_reply(
         self, ctx: ModuleContext, settings: Settings, now: int,
     ) -> None:
-        if not mentions_nick(ctx.message.body, ctx.bottle.irc.nick):
+        if not mentions_any_nick(ctx.message.body, ctx.bottle.address_names):
             return
         row = await self._state(ctx)
         if row is None or not str(row["phase"]).startswith("awaiting_"):

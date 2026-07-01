@@ -29,7 +29,9 @@ async def load_bottle(db: aiosqlite.Connection, bottle_id: int) -> Bottle:
         """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
                   i.realname, i.channels, i.password, i.sasl_username,
                   i.sasl_password, i.user_modes, l.endpoint, l.model,
-                  l.api_key, l.temperature, l.max_tokens
+                  l.api_key, l.temperature, l.max_tokens,
+                  COALESCE((SELECT json_group_array(a.alias)
+                            FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
            JOIN llm_profiles l ON l.id = b.llm_profile_id
            WHERE b.id = ? AND b.enabled = 1""",
@@ -48,6 +50,7 @@ def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
         cooldown_seconds=row["cooldown_seconds"],
         listen_window_seconds=row["listen_window_seconds"],
         extract_memories=bool(row["extract_memories"]),
+        aliases=json.loads(row["aliases"]),
         irc=IRCProfile(network=row["network"], host=row["host"], port=row["port"],
             tls=bool(row["tls"]), nick=row["nick"], username=row["username"],
             realname=row["realname"], channels=json.loads(row["channels"]),
@@ -79,7 +82,9 @@ async def load_enabled_bottles(db: aiosqlite.Connection) -> list[Bottle]:
         """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
                   i.realname, i.channels, i.password, i.sasl_username,
                   i.sasl_password, i.user_modes, l.endpoint, l.model,
-                  l.api_key, l.temperature, l.max_tokens
+                  l.api_key, l.temperature, l.max_tokens,
+                  COALESCE((SELECT json_group_array(a.alias)
+                            FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
            JOIN llm_profiles l ON l.id = b.llm_profile_id
            WHERE b.enabled = 1 ORDER BY b.id"""

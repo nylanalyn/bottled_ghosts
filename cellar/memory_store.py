@@ -186,15 +186,21 @@ async def list_user_memories(
     return [UserMemory(**dict(row)) for row in await cursor.fetchall()]
 
 
-async def list_all_user_memories(db: aiosqlite.Connection) -> list[UserMemoryView]:
+async def list_all_user_memories(
+    db: aiosqlite.Connection, *, include_expired: bool = False,
+) -> list[UserMemoryView]:
+    expiry_filter = "" if include_expired else (
+        "WHERE um.expires_at IS NULL OR um.expires_at > CURRENT_TIMESTAMP"
+    )
     cursor = await db.execute(
-        """SELECT um.id, um.user_id, u.canonical_name, um.source_candidate_id,
+        f"""SELECT um.id, um.user_id, u.canonical_name, um.source_candidate_id,
                   m.body AS source_body, um.memory_text, um.memory_type, um.confidence
                   , um.expires_at
            FROM user_memories um
            JOIN users u ON u.id = um.user_id
            LEFT JOIN memory_candidates c ON c.id = um.source_candidate_id
            LEFT JOIN messages m ON m.id = c.source_message_id
+           {expiry_filter}
            ORDER BY u.canonical_name COLLATE NOCASE, um.id"""
     )
     return [UserMemoryView(**dict(row)) for row in await cursor.fetchall()]

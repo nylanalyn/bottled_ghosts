@@ -15,6 +15,7 @@ from cellar.memory_store import (
     approve_memory_candidate,
     approved_memory_texts,
     edit_user_memory,
+    list_all_user_memories,
     list_memory_candidates,
     list_user_memories,
     reject_memory_candidate,
@@ -35,6 +36,30 @@ async def test_extractor_accepts_strict_categorized_json(monkeypatch) -> None:
         body="I love cheese",
     )
     assert candidates == [ExtractedMemory(text="Likes cheese", type="preference", confidence=0.9)]
+
+
+@pytest.mark.asyncio
+async def test_extractor_retries_truncated_json_with_larger_budget(monkeypatch) -> None:
+    token_budgets: list[int] = []
+
+    async def fake_complete(profile, _messages) -> str:
+        token_budgets.append(profile.max_tokens)
+        if len(token_budgets) == 1:
+            return '{"candidates":[{"text":"unfinished'
+        return '{"candidates":[{"text":"Builds weather station","type":"project","confidence":0.8}]}'
+
+    monkeypatch.setattr("cellar.memory.complete", fake_complete)
+    candidates = await extract_candidates(
+        LLMProfile(endpoint="http://localhost", model="test"),
+        speaker="alice", body="I am building a weather station",
+    )
+
+    assert token_budgets == [512, 1024]
+    assert candidates == [
+        ExtractedMemory(
+            text="Builds weather station", type="project", confidence=0.8,
+        )
+    ]
 
 
 def test_extractor_model_rejects_unknown_memory_category() -> None:
@@ -147,6 +172,14 @@ async def test_pending_candidate_keeps_source_and_deduplicates(tmp_path) -> None
         assert "temporary_state: Busy today" not in await approved_memory_texts(
             db, user_id=user_id
         )
+        assert temporary_memory_id not in {
+            memory.id for memory in await list_all_user_memories(db)
+        }
+        assert temporary_memory_id in {
+            memory.id for memory in await list_all_user_memories(
+                db, include_expired=True,
+            )
+        }
         await edit_user_memory(
             db, memory_id=temporary_memory_id, memory_type="relationship",
             actor="test-operator",

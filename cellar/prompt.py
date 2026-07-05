@@ -20,8 +20,10 @@ def build_prompt(
     same-role turns are merged so the conversation alternates cleanly.
     """
     rules = (
-        "You are an IRC character. Reply with plain text in one or two short lines. "
-        "Use plain text only."
+        "You are an IRC character. Reply in a natural conversational length. "
+        "Use one line for a simple thought, or two or three lines when a follow-up "
+        "thought makes the reply feel more human. Complete sentences do not need to "
+        "be artificially brief. Use plain text only."
     )
     bot_identity = {irc_casefold(nick) for nick in bot_nicks}
 

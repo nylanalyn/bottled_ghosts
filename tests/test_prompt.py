@@ -7,6 +7,8 @@ def test_system_message_carries_rules_and_soul() -> None:
                           bot_nicks=("ghost",))
     assert result[0]["role"] == "system"
     assert "IRC character" in result[0]["content"]
+    assert "natural conversational length" in result[0]["content"]
+    assert "artificially brief" in result[0]["content"]
     assert result[0]["content"].endswith("Be spectral.")
 
 

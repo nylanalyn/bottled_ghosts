@@ -3,8 +3,9 @@
 ## Decision
 
 Approved `temporary_state` memories expire 24 hours after approval. Expiration is
-represented by `user_memories.expires_at`; expired rows remain stored and visible
-to operators but retrieval excludes them from prompts.
+represented by `user_memories.expires_at`; expired rows remain stored for audit,
+but active-memory views and prompt retrieval exclude them. Maintenance and audit
+tools may explicitly request expired rows when historical inspection is needed.
 
 Changing a durable memory to `temporary_state` starts a new 24-hour lifetime.
 Changing a temporary memory to another category clears its expiry. Both values

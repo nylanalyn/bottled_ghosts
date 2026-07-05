@@ -32,6 +32,13 @@ def test_parse_privmsg_with_account_tag() -> None:
     assert message.account == "alice"
 
 
+def test_parse_privmsg_strips_formatting_and_ignores_ctcp() -> None:
+    message = parse_privmsg(":alice!u@h PRIVMSG #cellar :\x02bold\x0f \x0312blue")
+    assert message is not None
+    assert message.body == "bold blue"
+    assert parse_privmsg(":alice!u@h PRIVMSG ghost :\x01VERSION\x01") is None
+
+
 def test_ignore_other_commands() -> None:
     assert parse_privmsg(":server 001 ghost :welcome") is None
     assert parse_privmsg("@malformed-tag-only") is None
@@ -136,6 +143,106 @@ async def test_capabilities_are_requested_together(monkeypatch) -> None:
         "USER ghost 0 * :Ghost"
     )
     assert writer.lines.count("CAP END") == 1
+
+
+@pytest.mark.asyncio
+async def test_privmsg_cap_words_do_not_restart_negotiation(monkeypatch) -> None:
+    seen = []
+
+    class Reader:
+        def __init__(self) -> None:
+            self.lines = iter([
+                b":server 001 ghost :welcome\r\n",
+                b":alice!u@h PRIVMSG #test :yeah the CAP LS thing is weird\r\n",
+                b"",
+            ])
+
+        async def readline(self) -> bytes:
+            return next(self.lines)
+
+    class Writer:
+        def __init__(self) -> None:
+            self.lines = []
+        def write(self, data: bytes) -> None:
+            self.lines.append(data.decode().rstrip())
+        async def drain(self) -> None: return None
+        def close(self) -> None: return None
+        async def wait_closed(self) -> None: return None
+
+    reader, writer = Reader(), Writer()
+    async def open_connection(*_args, **_kwargs): return reader, writer
+    async def handler(message) -> None: seen.append(message.body)
+    monkeypatch.setattr("cellar.irc.asyncio.open_connection", open_connection)
+    client = IRCClient(IRCProfile(network="test", host="localhost", tls=False,
+        nick="ghost", username="ghost", realname="Ghost", channels=["#test"]), handler)
+    with pytest.raises(ConnectionError):
+        await client.run()
+    assert seen == ["yeah the CAP LS thing is weird"]
+    assert writer.lines.count("CAP LS 302") == 1
+    assert not any(line.startswith("NICK ") for line in writer.lines)
+
+
+@pytest.mark.asyncio
+async def test_nick_collision_uses_configured_alternate(monkeypatch) -> None:
+    class Reader:
+        def __init__(self) -> None:
+            self.lines = iter([
+                b":server CAP * LS :account-tag\r\n",
+                b":server 433 * ghost :Nickname is already in use\r\n",
+                b":server 001 ghost_ :welcome\r\n",
+                b"",
+            ])
+        async def readline(self) -> bytes: return next(self.lines)
+    class Writer:
+        def __init__(self) -> None: self.lines = []
+        def write(self, data: bytes) -> None: self.lines.append(data.decode().rstrip())
+        async def drain(self) -> None: return None
+        def close(self) -> None: return None
+        async def wait_closed(self) -> None: return None
+    reader, writer = Reader(), Writer()
+    async def open_connection(*_args, **_kwargs): return reader, writer
+    async def handler(_message) -> None: return None
+    monkeypatch.setattr("cellar.irc.asyncio.open_connection", open_connection)
+    client = IRCClient(IRCProfile(network="test", host="localhost", tls=False,
+        nick="ghost", alternate_nicks=["ghost_"], username="ghost",
+        realname="Ghost", channels=["#test"]), handler)
+    with pytest.raises(ConnectionError):
+        await client.run()
+    assert "NICK ghost" in writer.lines
+    assert "NICK ghost_" in writer.lines
+    assert client.current_nick == "ghost_"
+
+
+@pytest.mark.asyncio
+async def test_registered_idle_connection_requires_keepalive_pong(monkeypatch) -> None:
+    class Reader:
+        async def readline(self) -> bytes:
+            return b":server 001 ghost :welcome\r\n"
+    class Writer:
+        def __init__(self) -> None: self.lines = []
+        def write(self, data: bytes) -> None: self.lines.append(data.decode().rstrip())
+        async def drain(self) -> None: return None
+        def close(self) -> None: return None
+        async def wait_closed(self) -> None: return None
+    reader, writer = Reader(), Writer()
+    calls = 0
+    real_wait_for = __import__("asyncio").wait_for
+    async def wait_for(awaitable, *, timeout):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return await real_wait_for(awaitable, timeout=timeout)
+        awaitable.close()
+        raise TimeoutError
+    async def open_connection(*_args, **_kwargs): return reader, writer
+    async def handler(_message) -> None: return None
+    monkeypatch.setattr("cellar.irc.asyncio.open_connection", open_connection)
+    monkeypatch.setattr("cellar.irc.asyncio.wait_for", wait_for)
+    client = IRCClient(IRCProfile(network="test", host="localhost", tls=False,
+        nick="ghost", username="ghost", realname="Ghost", channels=["#test"]), handler)
+    with pytest.raises(ConnectionError, match="PONG timed out"):
+        await client.run()
+    assert "PING :bottled-ghosts-keepalive" in writer.lines
 
 
 @pytest.mark.asyncio

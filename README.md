@@ -63,6 +63,13 @@ Only approved memories are retrieved into prompts. Search raw logs with:
 bottled-ghosts logs-search "brass telescope" --bottle 1 --channel '#fractalsignal'
 ```
 
+Prune old raw messages explicitly while retaining anything referenced as memory
+provenance:
+
+```bash
+bottled-ghosts logs-prune 180 --actor aureate
+```
+
 Modules are registered in source and enabled per Bottle in SQLite:
 
 ```bash
@@ -177,12 +184,6 @@ bottled-ghosts set-sasl 1 --actor aureate
 The Audit tab combines memory-review and Bottle-configuration audit streams for
 inspection without duplicating them into another state store.
 
-To add or replace SASL credentials on an existing Bottle:
-
-```bash
-bottled-ghosts set-sasl 1
-```
-
 The configuration wizard stores its result in `spirits.db`. The LLM endpoint
 must be the full URL of an OpenAI-compatible chat-completions endpoint. The bot
 logs all channel messages but only replies when its nickname appears in a
@@ -201,9 +202,24 @@ bottled-ghosts aliases RUMI_BOT_ID
 Aliases affect normal replies, emergency monitoring, and modules that require
 the Bottle to be addressed. Reconnect after adding or deleting an alias.
 
+Configure ordered fallback IRC nicks for `433` nick collisions separately from
+address aliases:
+
+```bash
+bottled-ghosts alternate-nicks BOT_ID frauderick_ frauderick__ --actor aureate
+```
+
+The client tries each fallback in order during registration. SASL failures stop
+the Bottle instead of retrying bad credentials indefinitely. Registered
+connections use an idle PING/PONG deadline to detect dead sockets.
+
 At runtime, connection, registration, SASL, channel join, generation, and send
 events are logged to the terminal. Credentials and raw LLM response bodies are
 never logged.
 
 Soul files are Markdown prompt inputs. All persistent runtime state and
 configuration are canonical in SQLite.
+
+Opening the database applies pending migrations before any command runs; the
+explicit `migrate` command is provided for operators who want to upgrade before
+starting other work.

@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 015.
+The schema below reflects migration 020.
 
 ## schema_migrations
 
@@ -8,9 +8,9 @@ Records applied schema versions. Columns: `version INTEGER PRIMARY KEY`, `applie
 
 ## irc_profiles
 
-Stores IRC connection configuration. Columns: `id INTEGER PRIMARY KEY`, `network TEXT NOT NULL`, `host TEXT NOT NULL`, `port INTEGER NOT NULL`, `tls INTEGER NOT NULL`, `nick TEXT NOT NULL`, `username TEXT NOT NULL`, `realname TEXT NOT NULL`, `channels TEXT NOT NULL`, `password TEXT`, `sasl_username TEXT`, `sasl_password TEXT`, `user_modes TEXT NOT NULL DEFAULT ''`.
+Stores IRC connection configuration. Columns: `id INTEGER PRIMARY KEY`, `network TEXT NOT NULL`, `host TEXT NOT NULL`, `port INTEGER NOT NULL`, `tls INTEGER NOT NULL`, `nick TEXT NOT NULL`, `username TEXT NOT NULL`, `realname TEXT NOT NULL`, `channels TEXT NOT NULL`, `password TEXT`, `sasl_username TEXT`, `sasl_password TEXT`, `user_modes TEXT NOT NULL DEFAULT ''`, `alternate_nicks TEXT NOT NULL DEFAULT '[]'`.
 
-`channels` is a JSON-encoded list inside SQLite; SQLite remains canonical.
+`channels` and `alternate_nicks` are JSON-encoded lists inside SQLite; SQLite remains canonical.
 
 ## llm_profiles
 
@@ -106,6 +106,14 @@ Stores the per-Bottle admin API bearer token. Columns: `bot_id INTEGER PRIMARY K
 
 Stores additional names that address a Bottle. Columns: `bot_id INTEGER NOT NULL`, `alias TEXT NOT NULL`, `alias_key TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, alias_key)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `bot_aliases_lookup_idx(bot_id, alias_key)`. `alias_key` uses IRC case folding so equivalent bracket and case variants cannot be duplicated.
 
+## emergency_alert_state
+
+Stores the last successful emergency alert time per Bottle and IRC location for runtime-enforced paging cooldowns. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `last_alert_at INTEGER NOT NULL`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
+
+## maintenance_events
+
+Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY KEY`, `actor TEXT NOT NULL`, `action TEXT NOT NULL`, `details TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. The `maintenance_events_no_update` and `maintenance_events_no_delete` triggers enforce append-only storage.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -125,3 +133,6 @@ Stores additional names that address a Bottle. Columns: `bot_id INTEGER NOT NULL
 - 015: Add persisted per-channel state and deadlines for the optional fishing module.
 - 016: Add persistent response control, outbound administration events, and admin API credentials.
 - 017: Add canonical per-Bottle address aliases.
+- 018: Add ordered fallback nick configuration to IRC profiles.
+- 019: Add persistent per-location emergency alert cooldown state.
+- 020: Add append-only maintenance history for explicit retention jobs.

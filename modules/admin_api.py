@@ -105,6 +105,12 @@ class Module:
                     f"model: {ctx.bottle.llm.model}\n"
                     f"responding: {'yes' if enabled else 'OFF (monitoring emergencies)'}"
                 ]
+                if ctx.state.failed_modules:
+                    failures = ", ".join(
+                        f"{name} ({hook})"
+                        for name, hook in sorted(ctx.state.failed_modules.items())
+                    )
+                    messages[0] += f"\nmodules disabled after errors: {failures}"
             elif command == "model":
                 messages = [f"model: {ctx.bottle.llm.model}"]
             elif command in {"off", "on"}:

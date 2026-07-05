@@ -28,7 +28,7 @@ async def load_bottle(db: aiosqlite.Connection, bottle_id: int) -> Bottle:
     cursor = await db.execute(
         """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
                   i.realname, i.channels, i.password, i.sasl_username,
-                  i.sasl_password, i.user_modes, l.endpoint, l.model,
+                  i.sasl_password, i.user_modes, i.alternate_nicks, l.endpoint, l.model,
                   l.api_key, l.temperature, l.max_tokens,
                   COALESCE((SELECT json_group_array(a.alias)
                             FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases
@@ -55,7 +55,8 @@ def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
             tls=bool(row["tls"]), nick=row["nick"], username=row["username"],
             realname=row["realname"], channels=json.loads(row["channels"]),
             password=row["password"], sasl_username=row["sasl_username"],
-            sasl_password=row["sasl_password"], user_modes=row["user_modes"]),
+            sasl_password=row["sasl_password"], user_modes=row["user_modes"],
+            alternate_nicks=json.loads(row["alternate_nicks"])),
         llm=LLMProfile(endpoint=row["endpoint"], model=row["model"],
             api_key=row["api_key"], temperature=row["temperature"], max_tokens=row["max_tokens"]),
     )
@@ -81,7 +82,7 @@ async def load_enabled_bottles(db: aiosqlite.Connection) -> list[Bottle]:
     cursor = await db.execute(
         """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
                   i.realname, i.channels, i.password, i.sasl_username,
-                  i.sasl_password, i.user_modes, l.endpoint, l.model,
+                  i.sasl_password, i.user_modes, i.alternate_nicks, l.endpoint, l.model,
                   l.api_key, l.temperature, l.max_tokens,
                   COALESCE((SELECT json_group_array(a.alias)
                             FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases
@@ -111,11 +112,12 @@ async def create_bottle(
         irc_cursor = await db.execute(
             """INSERT INTO irc_profiles(
                    network, host, port, tls, nick, username, realname, channels, password,
-                   sasl_username, sasl_password, user_modes
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   sasl_username, sasl_password, user_modes, alternate_nicks
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (irc.network, irc.host, irc.port, irc.tls, irc.nick, irc.username,
              irc.realname, json.dumps(irc.channels), irc.password,
-             irc.sasl_username, irc.sasl_password, irc.user_modes),
+             irc.sasl_username, irc.sasl_password, irc.user_modes,
+             json.dumps(irc.alternate_nicks)),
         )
         llm_cursor = await db.execute(
             """INSERT INTO llm_profiles(
@@ -154,6 +156,7 @@ async def create_bottle(
                     "realname": irc.realname,
                     "channels": irc.channels,
                     "user_modes": irc.user_modes,
+                    "alternate_nicks": irc.alternate_nicks,
                     "endpoint": llm.endpoint,
                     "model": llm.model,
                     "temperature": llm.temperature,
@@ -326,9 +329,12 @@ async def recent_messages(
 
 def exact_search_query(text: str) -> str | None:
     words: list[str] = []
+    seen: set[str] = set()
     for word in re.findall(r"[\w]+", text, flags=re.UNICODE):
-        if len(word) >= 3 and word.casefold() not in {item.casefold() for item in words}:
+        folded = word.casefold()
+        if len(word) >= 3 and folded not in seen:
             words.append(word)
+            seen.add(folded)
         if len(words) == 8:
             break
     return " OR ".join(f'"{word}"' for word in words) if words else None
@@ -385,3 +391,35 @@ async def search_logs(
         (query, bot_id, bot_id, network, network, channel, channel, limit),
     )
     return [LogSearchResult(**dict(row)) for row in await cursor.fetchall()]
+
+
+async def prune_messages(
+    db: aiosqlite.Connection, *, older_than_days: int, actor: str = "operator",
+) -> int:
+    if older_than_days < 1:
+        raise ValueError("message retention must be at least one day")
+    actor = actor.strip()
+    if not actor:
+        raise ValueError("maintenance actor cannot be empty")
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        cursor = await db.execute(
+            """DELETE FROM messages
+               WHERE timestamp < datetime('now', ?)
+                 AND NOT EXISTS (
+                     SELECT 1 FROM memory_candidate_sources sources
+                     WHERE sources.message_id = messages.id
+                 )""",
+            (f"-{older_than_days} days",),
+        )
+        deleted = max(cursor.rowcount, 0)
+        await db.execute(
+            """INSERT INTO maintenance_events(actor, action, details)
+               VALUES (?, 'messages:prune', ?)""",
+            (actor, json.dumps({"older_than_days": older_than_days, "deleted": deleted})),
+        )
+        await db.commit()
+        return deleted
+    except Exception:
+        await db.rollback()
+        raise

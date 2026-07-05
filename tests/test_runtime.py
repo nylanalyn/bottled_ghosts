@@ -12,7 +12,9 @@ from cellar.models import (
     LLMProfile,
 )
 from cellar.module_store import set_module_enabled, set_module_settings
+from cellar.module_api import ModuleRunner
 from cellar.runtime import run_bottle, run_bottle_once, run_bottles
+from cellar.irc import IRCAuthenticationError
 from cellar.storage import create_bottle, load_bottle, open_database
 
 
@@ -29,7 +31,7 @@ async def test_bottle_reconnects_with_backoff(monkeypatch, tmp_path) -> None:
     attempts = 0
     delays: list[float] = []
 
-    async def fake_run_once(_db, _bottle) -> None:
+    async def fake_run_once(_db, _bottle, *_args) -> None:
         nonlocal attempts
         attempts += 1
         if attempts == 3:
@@ -40,6 +42,9 @@ async def test_bottle_reconnects_with_backoff(monkeypatch, tmp_path) -> None:
         delays.append(delay)
 
     monkeypatch.setattr("cellar.runtime.run_bottle_once", fake_run_once)
+    async def fake_load_modules(_db, *, bottle_id: int):
+        return ModuleRunner([])
+    monkeypatch.setattr("cellar.runtime.load_modules", fake_load_modules)
     monkeypatch.setattr("cellar.runtime.asyncio.sleep", fake_sleep)
 
     with pytest.raises(asyncio.CancelledError):
@@ -58,7 +63,7 @@ async def test_bottle_resets_backoff_after_stable_session(monkeypatch, tmp_path)
     attempts = 0
     delays: list[float] = []
 
-    async def fake_run_once(_db, _bottle) -> None:
+    async def fake_run_once(_db, _bottle, *_args) -> None:
         nonlocal attempts
         attempts += 1
         if attempts == 4:
@@ -69,6 +74,9 @@ async def test_bottle_resets_backoff_after_stable_session(monkeypatch, tmp_path)
         delays.append(delay)
 
     monkeypatch.setattr("cellar.runtime.run_bottle_once", fake_run_once)
+    async def fake_load_modules(_db, *, bottle_id: int):
+        return ModuleRunner([])
+    monkeypatch.setattr("cellar.runtime.load_modules", fake_load_modules)
     monkeypatch.setattr("cellar.runtime.asyncio.sleep", fake_sleep)
     real_monotonic = time.monotonic
 
@@ -84,6 +92,23 @@ async def test_bottle_resets_backoff_after_stable_session(monkeypatch, tmp_path)
     with pytest.raises(asyncio.CancelledError):
         await run_bottle(object(), bottle)  # type: ignore[arg-type]
     assert delays == [1.0, 2.0, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_authentication_failure_stops_without_retry(monkeypatch, tmp_path) -> None:
+    bottle = Bottle(
+        id=1, name="test", soul_prompt_path=tmp_path / "soul.md",
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost", channels=["#test"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+    )
+    async def fake_load_modules(_db, *, bottle_id: int): return ModuleRunner([])
+    async def fake_run_once(*_args):
+        raise IRCAuthenticationError("bad credentials")
+    monkeypatch.setattr("cellar.runtime.load_modules", fake_load_modules)
+    monkeypatch.setattr("cellar.runtime.run_bottle_once", fake_run_once)
+    with pytest.raises(IRCAuthenticationError, match="bad credentials"):
+        await run_bottle(object(), bottle)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

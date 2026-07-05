@@ -1,5 +1,4 @@
 import asyncio
-from contextvars import ContextVar
 import logging
 import time
 from dataclasses import dataclass
@@ -7,9 +6,9 @@ from pathlib import Path
 
 import aiosqlite
 
-from cellar.irc import IRCClient, irc_casefold, mentions_any_nick
+from cellar.irc import IRCAuthenticationError, IRCClient, irc_casefold, mentions_any_nick
 from cellar.admin_store import response_enabled
-from cellar.identity import resolve_user
+from cellar.identity import resolve_user_identity
 from cellar.ignore_store import matching_ignore_action
 from cellar.listening import ListeningWindowManager
 from cellar.llm import complete
@@ -30,7 +29,6 @@ from cellar.safety import Cooldown, sanitize
 from cellar.storage import log_message, open_database, recent_messages, search_messages
 
 logger = logging.getLogger(__name__)
-_runtime_state: ContextVar[RuntimeState | None] = ContextVar("bottle_runtime_state", default=None)
 
 
 @dataclass(frozen=True)
@@ -40,15 +38,21 @@ class WindowMessage:
     message_id: int
     conversation: str
     addressed: bool
+    identity_confidence: float
 
 
-async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
+async def run_bottle_once(
+    db: aiosqlite.Connection, bottle: Bottle,
+    modules: ModuleRunner | None = None, runtime_state: RuntimeState | None = None,
+) -> None:
     soul = read_soul(bottle.soul_prompt_path)
     cooldown = Cooldown(bottle.cooldown_seconds)
-    modules = await load_modules(db, bottle_id=bottle.id)
-    runtime_state = _runtime_state.get()
+    modules = modules or await load_modules(db, bottle_id=bottle.id)
     database_lock = runtime_state.database_lock if runtime_state is not None else asyncio.Lock()
     client: IRCClient
+
+    def active_nick() -> str:
+        return getattr(client, "current_nick", bottle.irc.nick)
 
     async def respond(items: tuple[WindowMessage, ...]) -> None:
         latest = items[-1]
@@ -57,7 +61,7 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
         message_ids = [item.message_id for item in items]
         body = "\n".join(item.message.body for item in items)
         speaker, channel = message.nick, latest.conversation
-        direct_message = irc_casefold(message.target) == irc_casefold(bottle.irc.nick)
+        direct_message = irc_casefold(message.target) == irc_casefold(active_nick())
         reply_target = speaker if direct_message else message.target
         module_context = ModuleContext(
             db=db, bottle=bottle, message=message, user_id=user_id,
@@ -76,7 +80,10 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
                 db, bot_id=bottle.id, network=bottle.irc.network, channel=channel,
                 text=body, exclude_message_ids=message_ids,
             )
-            memories = await approved_memory_texts(db, user_id=user_id)
+            memories = (
+                await approved_memory_texts(db, user_id=user_id)
+                if latest.identity_confidence >= 0.8 else []
+            )
             dreams = await recent_dream_texts(db, bot_id=bottle.id)
             await modules.before_prompt(module_context)
         prompt = build_prompt(
@@ -88,7 +95,10 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
         async with database_lock:
             await modules.after_response(module_context)
             replies_enabled = await response_enabled(db, bottle_id=bottle.id)
-        lines = sanitize(response, max_lines=bottle.max_lines, max_chars=bottle.max_chars)
+        lines = sanitize(
+            module_context.response or "", max_lines=bottle.max_lines,
+            max_chars=bottle.max_chars,
+        )
         if not replies_enabled:
             lines = []
         if not lines:
@@ -99,7 +109,7 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
             async with database_lock:
                 await log_message(
                     db, IRCMessage(network=bottle.irc.network, channel=channel,
-                                   speaker=bottle.irc.nick, body=line, bot_id=bottle.id),
+                                   speaker=active_nick(), body=line, bot_id=bottle.id),
                 )
         logger.info("sent %d reply line(s) to %s", len(lines), reply_target)
         if bottle.extract_memories and replies_enabled:
@@ -146,7 +156,7 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
                 await log_message(
                     db, IRCMessage(
                         network=bottle.irc.network, channel=channel,
-                        speaker=bottle.irc.nick, body=lines[0], bot_id=bottle.id,
+                        speaker=active_nick(), body=lines[0], bot_id=bottle.id,
                     ),
                 )
 
@@ -158,8 +168,11 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
             if ignore_action == "drop":
                 logger.info("dropping ignored message from %s", message.nick)
                 return
-            user_id = await resolve_user(db, network=bottle.irc.network, identity=message)
-            direct_message = irc_casefold(message.target) == irc_casefold(bottle.irc.nick)
+            resolved = await resolve_user_identity(
+                db, network=bottle.irc.network, identity=message,
+            )
+            user_id = resolved.user_id
+            direct_message = irc_casefold(message.target) == irc_casefold(active_nick())
             conversation = f"@{user_id}" if direct_message else message.target
             incoming = IRCMessage(
                 network=bottle.irc.network, channel=conversation, speaker=message.nick,
@@ -180,7 +193,8 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
         if ignore_action == "no_response":
             return
         key = (irc_casefold(conversation), user_id)
-        addressed = direct_message or mentions_any_nick(message.body, bottle.address_names)
+        address_names = (active_nick(), *bottle.address_names)
+        addressed = direct_message or mentions_any_nick(message.body, address_names)
         should_respond = windows.contains(key) or addressed or module_context.request_response
         should_monitor = not replies_enabled and module_context.monitor_when_silent
         if (replies_enabled and should_respond) or should_monitor:
@@ -188,6 +202,7 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
                 key, WindowMessage(
                     message=message, user_id=user_id, message_id=message_id,
                     conversation=conversation, addressed=addressed,
+                    identity_confidence=resolved.confidence,
                 )
             )
 
@@ -204,24 +219,26 @@ async def run_bottle_once(db: aiosqlite.Connection, bottle: Bottle) -> None:
 
 async def run_bottle(db: aiosqlite.Connection, bottle: Bottle) -> None:
     runtime_state = RuntimeState()
-    services = (
-        await load_modules(db, bottle_id=bottle.id)
-        if isinstance(db, aiosqlite.Connection)
-        else ModuleRunner([])
-    )
+    services = await load_modules(db, bottle_id=bottle.id)
     runtime_context = RuntimeContext(
         db=db, bottle=bottle, database_lock=runtime_state.database_lock, state=runtime_state,
     )
-    state_token = _runtime_state.set(runtime_state)
     delay = 1.0
     try:
         await services.start(runtime_context)
         while True:
             started_at = time.monotonic()
             try:
-                await run_bottle_once(db, bottle)
+                await run_bottle_once(db, bottle, services, runtime_state)
             except asyncio.CancelledError:
                 logger.info("stopping Bottle %d (%s)", bottle.id, bottle.name)
+                raise
+            except IRCAuthenticationError:
+                runtime_state.irc_connected = False
+                logger.exception(
+                    "Bottle %d (%s) authentication failed; stopping until configuration changes",
+                    bottle.id, bottle.name,
+                )
                 raise
             except Exception:
                 runtime_state.irc_connected = False
@@ -234,7 +251,6 @@ async def run_bottle(db: aiosqlite.Connection, bottle: Bottle) -> None:
     finally:
         runtime_state.irc_connected = False
         await services.stop(runtime_context)
-        _runtime_state.reset(state_token)
 
 
 async def run_bottle_from_database(database: Path, bottle: Bottle) -> None:

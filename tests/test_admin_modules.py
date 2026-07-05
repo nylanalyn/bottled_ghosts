@@ -78,6 +78,7 @@ async def test_emergency_module_requires_address_and_deduplicates_source(tmp_pat
         await module.on_message(addressed)
         assert addressed.monitor_when_silent
         await module.after_response(addressed)
+        assert addressed.response == "i am looking into it"
         await module.after_response(addressed)
         events = await consume_admin_events(db, bottle_id=bottle.id)
         assert len(events) == 1

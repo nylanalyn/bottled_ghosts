@@ -8,6 +8,7 @@ from pathlib import Path
 from cellar.configure import ask, collect_configuration
 from cellar.admin_store import set_admin_api_token
 from cellar.alias_store import add_alias, delete_alias, list_aliases
+from cellar.nick_store import set_alternate_nicks
 from cellar.dream_store import list_dreams
 from cellar.dreams import run_dream
 from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
@@ -33,6 +34,7 @@ from cellar.storage import (
     load_enabled_bottles,
     open_database,
     search_logs,
+    prune_messages,
     set_bottle_enabled,
     set_llm_api_key,
     set_memory_extraction,
@@ -73,6 +75,12 @@ async def async_main(args: argparse.Namespace) -> None:
                 db, bottle_id=args.bottle_id, alias=args.alias, actor=args.actor,
             )
             print("Alias deleted; reconnect to apply" if changed else "Alias not found")
+        elif args.command == "alternate-nicks":
+            changed = await set_alternate_nicks(
+                db, bottle_id=args.bottle_id, nicks=args.nicks, actor=args.actor,
+            )
+            print("Alternate nicks updated; reconnect to apply" if changed
+                  else "Alternate nicks are unchanged")
         elif args.command == "configure":
             (name, soul, irc, llm, max_lines, max_chars, cooldown, listen_window,
              extract_memories) = collect_configuration()
@@ -156,6 +164,11 @@ async def async_main(args: argparse.Namespace) -> None:
             ):
                 print(f"{result.id}\t{result.timestamp}\t{result.network}\t{result.channel}\t"
                       f"<{result.speaker}> {result.body}")
+        elif args.command == "logs-prune":
+            deleted = await prune_messages(
+                db, older_than_days=args.days, actor=args.actor,
+            )
+            print(f"Deleted {deleted} unreferenced message(s)")
         elif args.command == "modules":
             states = await module_states(db, bottle_id=args.bottle_id)
             settings = await module_settings(db, bottle_id=args.bottle_id)
@@ -259,6 +272,12 @@ def main() -> None:
     alias_delete.add_argument("bottle_id", type=int)
     alias_delete.add_argument("alias")
     alias_delete.add_argument("--actor", default="operator")
+    alternate_nicks = commands.add_parser(
+        "alternate-nicks", help="replace the ordered fallback IRC nick list"
+    )
+    alternate_nicks.add_argument("bottle_id", type=int)
+    alternate_nicks.add_argument("nicks", nargs="*")
+    alternate_nicks.add_argument("--actor", default="operator")
     commands.add_parser("run-all", help="run all enabled Bottles")
     sasl_parser = commands.add_parser("set-sasl", help="set SASL credentials for a Bottle")
     sasl_parser.add_argument("bottle_id", type=int)
@@ -306,6 +325,11 @@ def main() -> None:
     logs_search.add_argument("--network")
     logs_search.add_argument("--channel")
     logs_search.add_argument("--limit", type=int, default=20)
+    logs_prune = commands.add_parser(
+        "logs-prune", help="delete old messages not retained as memory provenance"
+    )
+    logs_prune.add_argument("days", type=int)
+    logs_prune.add_argument("--actor", default="operator")
     modules_parser = commands.add_parser("modules", help="list module state for a Bottle")
     modules_parser.add_argument("bottle_id", type=int)
     module_toggle = commands.add_parser("module-toggle", help="enable or disable a module")

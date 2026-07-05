@@ -4,6 +4,7 @@ from cellar.alias_store import add_alias, delete_alias, list_aliases
 from cellar.irc import mentions_any_nick
 from cellar.models import IRCProfile, LLMProfile
 from cellar.storage import create_bottle, load_bottle, open_database
+from cellar.nick_store import set_alternate_nicks
 
 
 async def test_aliases_are_persistent_audited_and_irc_casefolded(tmp_path) -> None:
@@ -62,5 +63,10 @@ async def test_alias_rejects_nickname_and_invalid_text(tmp_path) -> None:
             await add_alias(db, bottle_id=bottle_id, alias="RUMI-AS")
         with pytest.raises(ValueError, match="nickname characters"):
             await add_alias(db, bottle_id=bottle_id, alias="rumi as")
+        assert await set_alternate_nicks(
+            db, bottle_id=bottle_id, nicks=["rumi-as_", "rumi-as__"], actor="test",
+        )
+        reloaded = await load_bottle(db, bottle_id)
+        assert reloaded.irc.alternate_nicks == ["rumi-as_", "rumi-as__"]
     finally:
         await db.close()

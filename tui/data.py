@@ -99,6 +99,10 @@ async def dashboard_audit_events(
                                 ' -> ' || COALESCE(new_value, '(none)')
                            ELSE '' END
                FROM configuration_events
+               UNION ALL
+               SELECT 'maintenance-' || id, created_at, actor,
+                      'maintenance', action, 'runtime', details
+               FROM maintenance_events
            ) ORDER BY created_at DESC, event_key DESC LIMIT ?""", (limit,),
     )
     return [DashboardAuditEvent(**dict(row)) for row in await cursor.fetchall()]

@@ -87,38 +87,41 @@ def _format_flagged(recent: list[str]) -> str:
 async def _recent_bot_replies(ctx: ModuleContext, *, limit: int) -> list[str]:
     """Return the bot's own recent replies in this channel, oldest-first.
 
-    We scan recent messages and filter by the bot's known nicks rather than
-    hard-coding `bottle.irc.nick`, because `active_nick()` may differ from the
-    configured nick after a collision and the bot's logged replies carry
-    whichever nick it was using at the time.
+    We filter by the runtime's active nick rather than every configured fallback.
+    After a collision, another IRC user may legitimately hold the configured
+    primary nick, so treating every addressable name as the bot would misattribute
+    that user's speech.
     """
-    bot_identity = {irc_casefold(name) for name in ctx.bottle.address_names}
+    bot_identity = irc_casefold(ctx.bot_nick or ctx.bottle.irc.nick)
+    conversation = ctx.conversation or ctx.message.target
     rows = await (await ctx.db.execute(
         """SELECT speaker, body FROM (
                SELECT id, speaker, body FROM messages
                WHERE bot_id = ? AND network = ? AND channel = ?
                ORDER BY id DESC LIMIT ?
            ) ORDER BY id""",
-        (ctx.bottle.id, ctx.bottle.irc.network, ctx.message.target, limit),
+        (ctx.bottle.id, ctx.bottle.irc.network, conversation, limit),
     )).fetchall()
-    # rows are oldest-first; we want newest-first so recent_count slicing keeps
-    # the most recent replies.
-    return list(reversed([
+    # Rows are oldest-first, which lets callers keep the most recent N with a
+    # normal tail slice while presenting prompt context chronologically.
+    return [
         str(row["body"]) for row in rows
-        if irc_casefold(str(row["speaker"])) in bot_identity
-    ]))
+        if irc_casefold(str(row["speaker"])) == bot_identity
+    ]
 
 
 async def _flag_state(ctx: ModuleContext) -> bool:
+    conversation = ctx.conversation or ctx.message.target
     row = await (await ctx.db.execute(
         """SELECT flag_for_next_prompt FROM anti_repeat_state
            WHERE bot_id = ? AND network = ? AND channel = ?""",
-        (ctx.bottle.id, ctx.bottle.irc.network, ctx.message.target),
+        (ctx.bottle.id, ctx.bottle.irc.network, conversation),
     )).fetchone()
     return row is not None and bool(row["flag_for_next_prompt"])
 
 
 async def _set_flag(ctx: ModuleContext, *, flagged: bool) -> None:
+    conversation = ctx.conversation or ctx.message.target
     try:
         await ctx.db.execute("BEGIN IMMEDIATE")
         await ctx.db.execute(
@@ -128,7 +131,7 @@ async def _set_flag(ctx: ModuleContext, *, flagged: bool) -> None:
                ON CONFLICT(bot_id, network, channel) DO UPDATE SET
                    flag_for_next_prompt = excluded.flag_for_next_prompt,
                    updated_at = CURRENT_TIMESTAMP""",
-            (ctx.bottle.id, ctx.bottle.irc.network, ctx.message.target, 1 if flagged else 0),
+            (ctx.bottle.id, ctx.bottle.irc.network, conversation, 1 if flagged else 0),
         )
         await ctx.db.commit()
     except Exception:

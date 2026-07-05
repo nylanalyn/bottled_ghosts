@@ -66,6 +66,7 @@ async def run_bottle_once(
         module_context = ModuleContext(
             db=db, bottle=bottle, message=message, user_id=user_id,
             source_message_id=latest.message_id,
+            conversation=channel, bot_nick=active_nick(),
             response_reason=(
                 "addressed" if any(item.addressed for item in items) else "ambient"
             ),
@@ -89,7 +90,7 @@ async def run_bottle_once(
         prompt = build_prompt(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,
             dreams=dreams, relevant=relevant, history=history, speaker=speaker, body=body,
-            bot_nicks=bottle.address_names,
+            bot_nicks=(active_nick(),),
         )
         response = await complete(bottle.llm, prompt)
         module_context.response = response
@@ -182,7 +183,8 @@ async def run_bottle_once(
             message_id = await log_message(db, incoming)
             module_context = ModuleContext(
                 db=db, bottle=bottle, message=message, user_id=user_id,
-                source_message_id=message_id, response_allowed=ignore_action is None,
+                source_message_id=message_id, conversation=conversation,
+                bot_nick=active_nick(), response_allowed=ignore_action is None,
             )
             await modules.on_message(module_context)
             commands = list(module_context.commands)

@@ -78,10 +78,9 @@ class Bottle(BaseModel):
 
     @property
     def address_names(self) -> tuple[str, ...]:
-        # Anything the bot speaks *as*: primary nick, fallback nicks after a
-        # collision, and aliases. Used both for detecting when the bot is being
-        # addressed and for recognizing the bot's own prior lines as its own
-        # voice in prompt history.
+        # Names that may be used to address the bot. The runtime's active nick
+        # must be used separately when attributing the bot's own speech: after a
+        # nick collision, another user may legitimately hold one of these names.
         return (self.irc.nick, *self.irc.alternate_nicks, *self.aliases)
 
 

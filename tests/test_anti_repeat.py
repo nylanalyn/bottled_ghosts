@@ -59,12 +59,14 @@ def test_is_duplicate_passes_unrelated_text() -> None:
 
 
 def _context(db, bottle, *, target: str = "#test", nick: str = "alice",
-             response: str | None = None, message_id: int = 1) -> ModuleContext:
+             response: str | None = None, message_id: int = 1,
+             conversation: str | None = None, bot_nick: str | None = None) -> ModuleContext:
     return ModuleContext(
         db=db, bottle=bottle,
         message=IncomingIRCMessage(nick=nick, hostmask=None, account=None,
                                    target=target, body="incoming"),
         user_id=nick, source_message_id=message_id, response=response,
+        conversation=conversation, bot_nick=bot_nick,
     )
 
 
@@ -114,6 +116,63 @@ async def test_before_prompt_with_bot_replies_injects_awareness_note(tmp_path) -
         assert len(ctx.prompt_sections) == 1
         assert "i'll file that under mildly cursed" in ctx.prompt_sections[0]
         assert "do not repeat" in ctx.prompt_sections[0]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_before_prompt_keeps_newest_replies_in_chronological_order(tmp_path) -> None:
+    db = await open_database(tmp_path / "ar.db")
+    try:
+        bottle_id = await create_bottle(
+            db, name="test", soul_prompt_path=tmp_path / "SOUL.md",
+            irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#test"]),
+            llm=LLMProfile(endpoint="http://localhost", model="test"),
+        )
+        await set_module_enabled(db, bottle_id=bottle_id, module_name="anti_repeat", enabled=True)
+        bottle = await load_bottle(db, bottle_id)
+        runner = await load_modules(db, bottle_id=bottle_id)
+        for number in range(10):
+            await _seed_bot_reply(db, bottle, f"reply number {number}")
+        ctx = _context(db, bottle)
+        await runner.before_prompt(ctx)
+        note = ctx.prompt_sections[0]
+        assert "reply number 0" not in note
+        assert "reply number 1" not in note
+        assert note.index("reply number 2") < note.index("reply number 9")
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_message_uses_canonical_conversation_key(tmp_path) -> None:
+    db = await open_database(tmp_path / "ar.db")
+    try:
+        bottle_id = await create_bottle(
+            db, name="test", soul_prompt_path=tmp_path / "SOUL.md",
+            irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#test"]),
+            llm=LLMProfile(endpoint="http://localhost", model="test"),
+        )
+        await set_module_enabled(db, bottle_id=bottle_id, module_name="anti_repeat", enabled=True)
+        bottle = await load_bottle(db, bottle_id)
+        runner = await load_modules(db, bottle_id=bottle_id)
+        conversation = "@stable-user-id"
+        await _seed_bot_reply(
+            db, bottle, "oh alice is really doing the fishing thing again",
+            channel=conversation,
+        )
+        ctx = _context(
+            db, bottle, target="ghost", conversation=conversation, bot_nick="ghost",
+            response="oh alice is really doing the fishing thing today",
+        )
+        await runner.after_response(ctx)
+        row = await (await db.execute(
+            "SELECT channel, flag_for_next_prompt FROM anti_repeat_state"
+        )).fetchone()
+        assert row is not None
+        assert tuple(row) == (conversation, 1)
     finally:
         await db.close()
 

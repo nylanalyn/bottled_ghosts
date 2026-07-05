@@ -119,6 +119,9 @@ async def test_dashboard_queries_bottle_and_recent_activity(monkeypatch, tmp_pat
         await app.action_save_configuration()
         await pilot.pause()
         app.action_new_configuration()
+        assert app.query_one("#config-max-chars", Input).value == "400"
+        assert app.query_one("#config-cooldown", Input).value == "1.0"
+        assert app.query_one("#config-listen-window", Input).value == "8.0"
         new_values = {
             "config-name": "fern",
             "config-soul": str(soul_path),

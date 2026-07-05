@@ -24,6 +24,8 @@ class ModuleContext:
     message: IncomingIRCMessage
     user_id: str
     source_message_id: int
+    conversation: str | None = None
+    bot_nick: str | None = None
     response_allowed: bool = True
     request_response: bool = False
     monitor_when_silent: bool = False

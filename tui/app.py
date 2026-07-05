@@ -773,7 +773,8 @@ class BottledGhostsApp(App[None]):
             "config-endpoint": "", "config-model": "", "config-temperature": "0.7",
             "config-max-tokens": "160", "config-frequency-penalty": "0.0",
             "config-presence-penalty": "0.0",
-            "config-max-lines": "2",
+            "config-max-lines": "2", "config-max-chars": "400",
+            "config-cooldown": "1.0", "config-listen-window": "8.0",
         }
         for field_id, value in defaults.items():
             self.query_one(f"#{field_id}", Input).value = value

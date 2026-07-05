@@ -68,3 +68,16 @@ def test_consecutive_same_role_history_merges() -> None:
     assert "<ada> one" in result[1]["content"]
     assert "<eve> two" in result[1]["content"]
     assert result[1]["content"].endswith("three")
+
+
+def test_collided_configured_nick_is_not_attributed_to_active_bot() -> None:
+    result = build_prompt(
+        soul="Be spectral.", module_state=[], memories=[], dreams=[], relevant=[],
+        history=[
+            ("ghost", "I own the configured nick"),
+            ("ghost_", "I am the active bot"),
+        ],
+        speaker="alice", body="hello", bot_nicks=("ghost_",),
+    )
+    assert result[1] == {"role": "user", "content": "<ghost> I own the configured nick"}
+    assert result[2] == {"role": "assistant", "content": "I am the active bot"}

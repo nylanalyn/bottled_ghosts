@@ -78,7 +78,11 @@ class Bottle(BaseModel):
 
     @property
     def address_names(self) -> tuple[str, ...]:
-        return (self.irc.nick, *self.aliases)
+        # Anything the bot speaks *as*: primary nick, fallback nicks after a
+        # collision, and aliases. Used both for detecting when the bot is being
+        # addressed and for recognizing the bot's own prior lines as its own
+        # voice in prompt history.
+        return (self.irc.nick, *self.irc.alternate_nicks, *self.aliases)
 
 
 class IRCMessage(BaseModel):

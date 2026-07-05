@@ -40,7 +40,11 @@ async def run_dream(
         },
         {"role": "user", "content": transcript},
     ]
-    profile = bottle.llm.model_copy(update={"temperature": 0.3, "max_tokens": 500})
+    profile = bottle.llm.model_copy(update={
+        "temperature": 0.3, "max_tokens": 500,
+        # dreams summarize; they should not avoid recurring topics the way chat does
+        "frequency_penalty": 0.0, "presence_penalty": 0.0,
+    })
     summary_text = strip_private_reasoning(await complete(profile, prompt))
     if not summary_text:
         raise ValueError("dream summary was empty after removing private reasoning")

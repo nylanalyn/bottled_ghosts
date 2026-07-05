@@ -89,6 +89,7 @@ async def run_bottle_once(
         prompt = build_prompt(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,
             dreams=dreams, relevant=relevant, history=history, speaker=speaker, body=body,
+            bot_nicks=bottle.address_names,
         )
         response = await complete(bottle.llm, prompt)
         module_context.response = response

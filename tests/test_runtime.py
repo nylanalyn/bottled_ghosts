@@ -263,6 +263,75 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
 
 
 @pytest.mark.asyncio
+async def test_bot_prior_reply_appears_as_assistant_turn(monkeypatch, tmp_path) -> None:
+    # The bot's own logged prior replies must reach the LLM as assistant role
+    # messages, not as flat <nick> text in a user turn. This is what stops the
+    # model from treating its own voice as channel-text to imitate.
+    database = tmp_path / "assistant-history.db"
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(database)
+    bottle_id = await create_bottle(
+        db, name="test", soul_prompt_path=soul,
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost", channels=["#test"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+        cooldown_seconds=0, listen_window_seconds=0.01,
+    )
+    bottle = await load_bottle(db, bottle_id)
+    prompts: list[list[dict[str, str]]] = []
+
+    # Seed a prior conversation: a user line, then the bot's own prior reply.
+    await db.execute(
+        "INSERT INTO messages(network, channel, speaker, body, bot_id) "
+        "VALUES ('test', '#test', 'alice', 'earlier question', ?)", (bottle_id,)
+    )
+    await db.execute(
+        "INSERT INTO messages(network, channel, speaker, body, bot_id) "
+        "VALUES ('test', '#test', 'ghost', 'i already answered this', ?)", (bottle_id,)
+    )
+    await db.commit()
+
+    class FakeIRCClient:
+        def __init__(self, _profile, handler) -> None:
+            self.handler = handler
+
+        async def run(self) -> None:
+            await self.handler(IncomingIRCMessage(
+                nick="alice", hostmask="u@host", account=None,
+                target="#test", body="ghost: same question again",
+            ))
+            await asyncio.sleep(0.03)
+
+        async def send_message(self, _target: str, _body: str) -> None:
+            return None
+
+    async def fake_load_modules(_db, *, bottle_id: int):
+        return ModuleRunner([])
+
+    async def fake_complete(_profile, prompt: list[dict[str, str]]) -> str:
+        prompts.append(prompt)
+        return "new reply"
+
+    monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+    monkeypatch.setattr("cellar.runtime.load_modules", fake_load_modules)
+    monkeypatch.setattr("cellar.runtime.complete", fake_complete)
+
+    try:
+        await run_bottle_once(db, bottle)
+        assert len(prompts) == 1
+        roles = [m["role"] for m in prompts[0]]
+        assert "assistant" in roles, f"expected an assistant turn, got roles: {roles}"
+        assistant_turns = [m for m in prompts[0] if m["role"] == "assistant"]
+        assert assistant_turns[0]["content"] == "i already answered this"
+        # The bot's own line must NOT also leak into a user turn as <ghost> text.
+        user_turns = [m["content"] for m in prompts[0] if m["role"] == "user"]
+        assert all("<ghost>" not in content for content in user_turns)
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
 async def test_direct_messages_share_stable_incoming_and_outgoing_history(
     monkeypatch, tmp_path,
 ) -> None:

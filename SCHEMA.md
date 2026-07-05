@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 021.
+The schema below reflects migration 022.
 
 ## schema_migrations
 
@@ -110,6 +110,10 @@ Stores additional names that address a Bottle. Columns: `bot_id INTEGER NOT NULL
 
 Stores the last successful emergency alert time per Bottle and IRC location for runtime-enforced paging cooldowns. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `last_alert_at INTEGER NOT NULL`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
 
+## anti_repeat_state
+
+Stores the optional anti-repeat module's per-channel flag. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `flag_for_next_prompt INTEGER NOT NULL DEFAULT 0` (CHECK 0 or 1), `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. The flag is set in `after_response` when a reply is too similar to a recent one (Sørensen–Dice over token bigrams, default ≥0.70) and consumed and cleared by the next `before_prompt`, which then injects a stronger "vary your angle" note. The bot's recent replies themselves are read on demand from `messages`, not stored here.
+
 ## maintenance_events
 
 Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY KEY`, `actor TEXT NOT NULL`, `action TEXT NOT NULL`, `details TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. The `maintenance_events_no_update` and `maintenance_events_no_delete` triggers enforce append-only storage.
@@ -137,3 +141,4 @@ Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY K
 - 019: Add persistent per-location emergency alert cooldown state.
 - 020: Add append-only maintenance history for explicit retention jobs.
 - 021: Add OpenAI-compatible frequency and presence penalty fields to LLM profiles, defaulting to 0.0 so existing Bottles keep their wire shape.
+- 022: Add per-channel flag state for the optional anti-repeat module.

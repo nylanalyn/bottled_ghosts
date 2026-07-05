@@ -457,6 +457,21 @@ async def migration_021(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_022(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE anti_repeat_state (
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            flag_for_next_prompt INTEGER NOT NULL DEFAULT 0 CHECK (flag_for_next_prompt IN (0, 1)),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (bot_id, network, channel)
+        );
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -467,6 +482,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_019,
     migration_020,
     migration_021,
+    migration_022,
 )
 
 

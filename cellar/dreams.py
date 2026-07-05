@@ -34,8 +34,8 @@ async def run_dream(
             "role": "system",
             "content": (
                 "Summarize this IRC period in the character's voice. Preserve notable events, "
-                "ongoing projects, and useful continuity. Do not invent facts. Do not use "
-                f"private reasoning outside <think> tags.\n\nCharacter:\n{read_soul(bottle.soul_prompt_path)}"
+                "ongoing projects, and useful continuity. Stick to plain text summary.\n\n"
+                f"Character:\n{read_soul(bottle.soul_prompt_path)}"
             ),
         },
         {"role": "user", "content": transcript},

@@ -62,6 +62,11 @@ def collect_configuration(
     api_key = getpass("API key (optional): ").strip() or None
     temperature = ask_float("Temperature", 0.7)
     max_tokens = ask_int("Maximum response tokens", 160)
+    print("Repetition penalties reduce phrase and topic loops (e.g. a catchphrase")
+    print('like "back to youtube" or noticing the same activity the same way).')
+    print("0 disables them; 0.3-0.6 is a good starting range for chat.")
+    frequency_penalty = ask_float("Frequency penalty (-2.0 to 2.0)", 0.0)
+    presence_penalty = ask_float("Presence penalty (-2.0 to 2.0)", 0.0)
 
     print("\nIRC output enforcement")
     max_lines = ask_int("Maximum reply lines", 2)
@@ -75,7 +80,8 @@ def collect_configuration(
                      sasl_username=sasl_username, sasl_password=sasl_password,
                      user_modes=user_modes)
     llm = LLMProfile(endpoint=endpoint, model=model, api_key=api_key,
-                     temperature=temperature, max_tokens=max_tokens)
+                     temperature=temperature, max_tokens=max_tokens,
+                     frequency_penalty=frequency_penalty, presence_penalty=presence_penalty)
     return (
         name, soul_path, irc, llm, max_lines, max_chars, cooldown, listen_window,
         extract_memories,

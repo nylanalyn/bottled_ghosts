@@ -195,6 +195,8 @@ class BottledGhostsApp(App[None]):
                         ("LLM model", "config-model", "text"),
                         ("LLM temperature", "config-temperature", "number"),
                         ("LLM maximum tokens", "config-max-tokens", "integer"),
+                        ("LLM frequency penalty", "config-frequency-penalty", "number"),
+                        ("LLM presence penalty", "config-presence-penalty", "number"),
                         ("Maximum IRC reply lines", "config-max-lines", "integer"),
                         ("Maximum characters per line", "config-max-chars", "integer"),
                         ("Cooldown seconds", "config-cooldown", "number"),
@@ -674,6 +676,8 @@ class BottledGhostsApp(App[None]):
             "config-model": settings.model,
             "config-temperature": str(settings.temperature),
             "config-max-tokens": str(settings.max_tokens),
+            "config-frequency-penalty": str(settings.frequency_penalty),
+            "config-presence-penalty": str(settings.presence_penalty),
             "config-max-lines": str(settings.max_lines),
             "config-max-chars": str(settings.max_chars),
             "config-cooldown": str(settings.cooldown_seconds),
@@ -704,6 +708,8 @@ class BottledGhostsApp(App[None]):
             endpoint=value("config-endpoint"), model=value("config-model"),
             temperature=float(value("config-temperature")),
             max_tokens=int(value("config-max-tokens")),
+            frequency_penalty=float(value("config-frequency-penalty")),
+            presence_penalty=float(value("config-presence-penalty")),
             max_lines=int(value("config-max-lines")),
             max_chars=int(value("config-max-chars")),
             cooldown_seconds=float(value("config-cooldown")),
@@ -733,6 +739,8 @@ class BottledGhostsApp(App[None]):
                     llm=LLMProfile(
                         endpoint=settings.endpoint, model=settings.model,
                         temperature=settings.temperature, max_tokens=settings.max_tokens,
+                        frequency_penalty=settings.frequency_penalty,
+                        presence_penalty=settings.presence_penalty,
                     ),
                     max_lines=settings.max_lines, max_chars=settings.max_chars,
                     cooldown_seconds=settings.cooldown_seconds,
@@ -763,9 +771,9 @@ class BottledGhostsApp(App[None]):
             "config-username": "", "config-realname": "", "config-channels": "",
             "config-user-modes": "",
             "config-endpoint": "", "config-model": "", "config-temperature": "0.7",
-            "config-max-tokens": "160", "config-max-lines": "2",
-            "config-max-chars": "400", "config-cooldown": "1.0",
-            "config-listen-window": "8.0",
+            "config-max-tokens": "160", "config-frequency-penalty": "0.0",
+            "config-presence-penalty": "0.0",
+            "config-max-lines": "2",
         }
         for field_id, value in defaults.items():
             self.query_one(f"#{field_id}", Input).value = value

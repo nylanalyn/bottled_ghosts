@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 020.
+The schema below reflects migration 021.
 
 ## schema_migrations
 
@@ -14,7 +14,7 @@ Stores IRC connection configuration. Columns: `id INTEGER PRIMARY KEY`, `network
 
 ## llm_profiles
 
-Stores OpenAI-compatible HTTP configuration. Columns: `id INTEGER PRIMARY KEY`, `endpoint TEXT NOT NULL`, `model TEXT NOT NULL`, `api_key TEXT`, `temperature REAL NOT NULL`, `max_tokens INTEGER NOT NULL`.
+Stores OpenAI-compatible HTTP configuration. Columns: `id INTEGER PRIMARY KEY`, `endpoint TEXT NOT NULL`, `model TEXT NOT NULL`, `api_key TEXT`, `temperature REAL NOT NULL`, `max_tokens INTEGER NOT NULL`, `frequency_penalty REAL NOT NULL DEFAULT 0.0` (CHECK between -2.0 and 2.0), `presence_penalty REAL NOT NULL DEFAULT 0.0` (CHECK between -2.0 and 2.0). The penalty fields are only sent to the completions endpoint when non-zero, so existing default-config Bottles keep their wire shape; they are forced to 0.0 for deterministic extraction and dream summarization.
 
 ## bots
 
@@ -136,3 +136,4 @@ Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY K
 - 018: Add ordered fallback nick configuration to IRC profiles.
 - 019: Add persistent per-location emergency alert cooldown state.
 - 020: Add append-only maintenance history for explicit retention jobs.
+- 021: Add OpenAI-compatible frequency and presence penalty fields to LLM profiles, defaulting to 0.0 so existing Bottles keep their wire shape.

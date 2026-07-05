@@ -24,7 +24,11 @@ async def extract_candidates(
         },
         {"role": "user", "content": f"Speaker: {speaker}\nMessage: {body}"},
     ]
-    extraction_profile = profile.model_copy(update={"temperature": 0.0, "max_tokens": 256})
+    extraction_profile = profile.model_copy(update={
+        "temperature": 0.0, "max_tokens": 256,
+        # extraction must stay deterministic; penalties are for chat variety
+        "frequency_penalty": 0.0, "presence_penalty": 0.0,
+    })
     raw = await complete(extraction_profile, messages)
     cleaned = FENCE_RE.sub("", raw.strip())
     parsed = ExtractedMemories.model_validate(json.loads(cleaned))

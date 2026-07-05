@@ -446,6 +446,17 @@ async def migration_020(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_021(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        ALTER TABLE llm_profiles ADD COLUMN frequency_penalty REAL NOT NULL DEFAULT 0.0
+            CHECK (frequency_penalty BETWEEN -2.0 AND 2.0);
+        ALTER TABLE llm_profiles ADD COLUMN presence_penalty REAL NOT NULL DEFAULT 0.0
+            CHECK (presence_penalty BETWEEN -2.0 AND 2.0);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -455,6 +466,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_018,
     migration_019,
     migration_020,
+    migration_021,
 )
 
 

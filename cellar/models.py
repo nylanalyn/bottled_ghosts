@@ -55,6 +55,12 @@ class LLMProfile(BaseModel):
     api_key: str | None = None
     temperature: float = 0.7
     max_tokens: int = 160
+    # OpenAI-compatible penalties. Higher values push the model away from
+    # tokens and topics it has already produced, which is the cheapest lever
+    # for breaking the "stuck on one phrase" attractor (e.g. repeating a
+    # catchphrase, or noticing the same activity in the same words).
+    frequency_penalty: float = Field(default=0.0, ge=-2.0, le=2.0)
+    presence_penalty: float = Field(default=0.0, ge=-2.0, le=2.0)
 
 
 class Bottle(BaseModel):

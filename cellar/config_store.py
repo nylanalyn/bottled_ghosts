@@ -22,6 +22,8 @@ class BottleSettings(BaseModel):
     model: str = Field(min_length=1)
     temperature: float = Field(ge=0, le=2)
     max_tokens: int = Field(ge=1)
+    frequency_penalty: float = Field(ge=-2.0, le=2.0)
+    presence_penalty: float = Field(ge=-2.0, le=2.0)
     max_lines: int = Field(ge=1)
     max_chars: int = Field(ge=1, le=450)
     cooldown_seconds: float = Field(ge=0)
@@ -36,7 +38,8 @@ async def load_bottle_settings(
                   b.cooldown_seconds, b.listen_window_seconds,
                   i.network, i.host, i.port, i.tls, i.nick,
                   i.username, i.realname, i.channels, l.endpoint, l.model,
-                  i.user_modes, l.temperature, l.max_tokens
+                  i.user_modes, l.temperature, l.max_tokens, l.frequency_penalty,
+                  l.presence_penalty
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
            JOIN llm_profiles l ON l.id = b.llm_profile_id WHERE b.id = ?""",
         (bottle_id,),
@@ -85,10 +88,12 @@ async def save_bottle_settings(
              settings.user_modes, settings.id),
         )
         await db.execute(
-            """UPDATE llm_profiles SET endpoint = ?, model = ?, temperature = ?, max_tokens = ?
+            """UPDATE llm_profiles SET endpoint = ?, model = ?, temperature = ?, max_tokens = ?,
+                   frequency_penalty = ?, presence_penalty = ?
                WHERE id = (SELECT llm_profile_id FROM bots WHERE id = ?)""",
             (settings.endpoint, settings.model, settings.temperature,
-             settings.max_tokens, settings.id),
+             settings.max_tokens, settings.frequency_penalty, settings.presence_penalty,
+             settings.id),
         )
         await db.execute(
             """INSERT INTO configuration_events(

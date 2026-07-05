@@ -29,7 +29,8 @@ async def load_bottle(db: aiosqlite.Connection, bottle_id: int) -> Bottle:
         """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
                   i.realname, i.channels, i.password, i.sasl_username,
                   i.sasl_password, i.user_modes, i.alternate_nicks, l.endpoint, l.model,
-                  l.api_key, l.temperature, l.max_tokens,
+                  l.api_key, l.temperature, l.max_tokens, l.frequency_penalty,
+                  l.presence_penalty,
                   COALESCE((SELECT json_group_array(a.alias)
                             FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
@@ -58,7 +59,9 @@ def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
             sasl_password=row["sasl_password"], user_modes=row["user_modes"],
             alternate_nicks=json.loads(row["alternate_nicks"])),
         llm=LLMProfile(endpoint=row["endpoint"], model=row["model"],
-            api_key=row["api_key"], temperature=row["temperature"], max_tokens=row["max_tokens"]),
+            api_key=row["api_key"], temperature=row["temperature"], max_tokens=row["max_tokens"],
+            frequency_penalty=row["frequency_penalty"],
+            presence_penalty=row["presence_penalty"]),
     )
 
 
@@ -83,7 +86,8 @@ async def load_enabled_bottles(db: aiosqlite.Connection) -> list[Bottle]:
         """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
                   i.realname, i.channels, i.password, i.sasl_username,
                   i.sasl_password, i.user_modes, i.alternate_nicks, l.endpoint, l.model,
-                  l.api_key, l.temperature, l.max_tokens,
+                  l.api_key, l.temperature, l.max_tokens, l.frequency_penalty,
+                  l.presence_penalty,
                   COALESCE((SELECT json_group_array(a.alias)
                             FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
@@ -121,9 +125,11 @@ async def create_bottle(
         )
         llm_cursor = await db.execute(
             """INSERT INTO llm_profiles(
-                   endpoint, model, api_key, temperature, max_tokens
-               ) VALUES (?, ?, ?, ?, ?)""",
-            (llm.endpoint, llm.model, llm.api_key, llm.temperature, llm.max_tokens),
+                   endpoint, model, api_key, temperature, max_tokens,
+                   frequency_penalty, presence_penalty
+               ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (llm.endpoint, llm.model, llm.api_key, llm.temperature, llm.max_tokens,
+             llm.frequency_penalty, llm.presence_penalty),
         )
         bottle_cursor = await db.execute(
             """INSERT INTO bots(
@@ -161,6 +167,8 @@ async def create_bottle(
                     "model": llm.model,
                     "temperature": llm.temperature,
                     "max_tokens": llm.max_tokens,
+                    "frequency_penalty": llm.frequency_penalty,
+                    "presence_penalty": llm.presence_penalty,
                     "max_lines": max_lines,
                     "max_chars": max_chars,
                     "cooldown_seconds": cooldown_seconds,

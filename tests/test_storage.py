@@ -16,6 +16,7 @@ from cellar.storage import (
     set_sasl_credentials,
     set_server_password,
 )
+from pydantic import ValidationError
 
 
 @pytest.mark.asyncio
@@ -116,3 +117,59 @@ async def test_migration_configuration_and_logging(tmp_path) -> None:
         )
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_llm_penalty_defaults_and_round_trip(tmp_path) -> None:
+    db = await open_database(tmp_path / "test.db")
+    try:
+        # Default-config Bottle keeps the wire shape (0.0 penalties).
+        default_id = await create_bottle(
+            db, name="default", soul_prompt_path=tmp_path / "soul.md",
+            irc=IRCProfile(network="local", host="irc.example", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#test"]),
+            llm=LLMProfile(endpoint="http://localhost/chat", model="m"),
+        )
+        default = await load_bottle(db, default_id)
+        assert default.llm.frequency_penalty == 0.0
+        assert default.llm.presence_penalty == 0.0
+
+        # Non-zero penalties persist and reload through both load paths.
+        tuned_id = await create_bottle(
+            db, name="tuned", soul_prompt_path=tmp_path / "soul.md",
+            irc=IRCProfile(network="local", host="irc.example", nick="ghost2",
+                           username="ghost2", realname="Ghost", channels=["#test"]),
+            llm=LLMProfile(
+                endpoint="http://localhost/chat", model="m",
+                frequency_penalty=0.6, presence_penalty=0.4,
+            ),
+            actor="test-operator",
+        )
+        tuned = await load_bottle(db, tuned_id)
+        assert (tuned.llm.frequency_penalty, tuned.llm.presence_penalty) == (0.6, 0.4)
+        enabled = await load_enabled_bottles(db)
+        tuned_via_enabled = next(b for b in enabled if b.id == tuned_id)
+        assert (tuned_via_enabled.llm.frequency_penalty,
+                tuned_via_enabled.llm.presence_penalty) == (0.6, 0.4)
+
+        # Audit row carries the new fields.
+        row = await (await db.execute(
+            "SELECT new_value FROM configuration_events WHERE bot_id = ? AND changed_fields = 'created'",
+            (tuned_id,),
+        )).fetchone()
+        assert row is not None
+        import json
+        audit = json.loads(row["new_value"])
+        assert audit["frequency_penalty"] == 0.6
+        assert audit["presence_penalty"] == 0.4
+    finally:
+        await db.close()
+
+
+def test_llm_profile_rejects_out_of_range_penalties() -> None:
+    with pytest.raises(ValidationError):
+        LLMProfile(endpoint="x", model="m", frequency_penalty=2.5)
+    with pytest.raises(ValidationError):
+        LLMProfile(endpoint="x", model="m", presence_penalty=-2.5)
+    # Boundaries are accepted.
+    LLMProfile(endpoint="x", model="m", frequency_penalty=2.0, presence_penalty=-2.0)

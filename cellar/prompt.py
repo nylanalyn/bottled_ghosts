@@ -23,7 +23,8 @@ def build_prompt(
         "You are an IRC character. Reply in a natural conversational length. "
         "Use one line for a simple thought, or two or three lines when a follow-up "
         "thought makes the reply feel more human. Complete sentences do not need to "
-        "be artificially brief. Use plain text only."
+        "be artificially brief. Use plain text only. Do not prefix your reply with "
+        "your IRC nickname or format it as an IRC transcript line."
     )
     bot_identity = {irc_casefold(nick) for nick in bot_nicks}
 

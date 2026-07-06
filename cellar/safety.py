@@ -16,11 +16,19 @@ def strip_private_reasoning(text: str) -> str:
     return TAG_RE.sub("", text).strip()
 
 
-def sanitize(text: str, *, max_lines: int, max_chars: int) -> list[str]:
+def sanitize(
+    text: str, *, max_lines: int, max_chars: int, bot_nick: str | None = None,
+) -> list[str]:
     text = strip_private_reasoning(text)
     text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    nick_prefix = (
+        re.compile(rf"^\s*<{re.escape(bot_nick)}>\s*", re.IGNORECASE)
+        if bot_nick else None
+    )
     lines: list[str] = []
     for raw in text.splitlines():
+        if nick_prefix is not None:
+            raw = nick_prefix.sub("", raw, count=1)
         tokens = raw.strip().replace("\r", "").split()
         line = " ".join(
             token if token.startswith(("http://", "https://"))

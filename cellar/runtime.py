@@ -99,7 +99,7 @@ async def run_bottle_once(
             replies_enabled = await response_enabled(db, bottle_id=bottle.id)
         lines = sanitize(
             module_context.response or "", max_lines=bottle.max_lines,
-            max_chars=bottle.max_chars,
+            max_chars=bottle.max_chars, bot_nick=active_nick(),
         )
         if not replies_enabled:
             lines = []

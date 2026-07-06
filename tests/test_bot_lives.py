@@ -34,6 +34,11 @@ def test_pick_activity_returns_exclude_when_pool_is_singleton() -> None:
     assert _pick_activity(("only",), exclude="only") == "only"
 
 
+def test_pick_activity_handles_duplicate_excluded_entries() -> None:
+    # Duplicate configuration values still form no usable alternative.
+    assert _pick_activity(("same", "same"), exclude="same") == "same"
+
+
 def test_resolve_activities_custom_wins_over_profile() -> None:
     resolved = _resolve_activities({"profile": "human", "activities": ["custom A", "custom B"]})
     assert resolved == ("custom A", "custom B")
@@ -188,6 +193,45 @@ async def test_before_prompt_rotates_when_expired(tmp_path) -> None:
         assert row2["current_activity"] in {"alpha", "beta"}
         # Expiry was reset into the future.
         assert row2["expires_at"] > "2000-01-01 00:00:00"
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_before_prompt_rotates_when_activity_is_not_in_configured_pool(tmp_path) -> None:
+    db = await open_database(tmp_path / "bl.db")
+    try:
+        bottle_id = await create_bottle(
+            db, name="test", soul_prompt_path=tmp_path / "SOUL.md",
+            irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#test"]),
+            llm=LLMProfile(endpoint="http://localhost", model="test"),
+        )
+        await _enable(db, bottle_id, settings={
+            "activities": ["old activity"], "min_minutes": 5, "max_minutes": 5,
+        })
+        bottle = await load_bottle(db, bottle_id)
+        runner = await load_modules(db, bottle_id=bottle_id)
+        await runner.before_prompt(_context(db, bottle))
+
+        # Simulate settings being changed and the module being reloaded while
+        # the previously selected activity is still unexpired.
+        await set_module_settings(
+            db, bottle_id=bottle_id, module_name="bot_lives",
+            settings={
+                "activities": ["new activity"], "min_minutes": 5, "max_minutes": 5,
+            }, actor="tester",
+        )
+        runner = await load_modules(db, bottle_id=bottle_id)
+        ctx = _context(db, bottle, message_id=2)
+        await runner.before_prompt(ctx)
+
+        row = await (await db.execute(
+            "SELECT current_activity FROM bot_lives_state"
+        )).fetchone()
+        assert row is not None
+        assert row["current_activity"] == "new activity"
+        assert "new activity" in ctx.prompt_sections[0]
     finally:
         await db.close()
 

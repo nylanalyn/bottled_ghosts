@@ -132,9 +132,10 @@ class Settings:
 
 def _pick_activity(pool: tuple[str, ...], *, exclude: str | None = None) -> str:
     """Pick a random activity, avoiding immediate repeat when the pool allows."""
-    if exclude is not None and len(pool) > 1:
+    if exclude is not None:
         candidates = tuple(activity for activity in pool if activity != exclude)
-        return random.choice(candidates)
+        if candidates:
+            return random.choice(candidates)
     return random.choice(pool)
 
 
@@ -198,7 +199,9 @@ class Module:
             activity = _pick_activity(settings.activities)
             ttl = random.randint(settings.min_minutes, settings.max_minutes)
             await _seed(ctx.db, bot_id=ctx.bottle.id, activity=activity, ttl_minutes=ttl)
-        elif await _expired(ctx.db, bot_id=ctx.bottle.id):
+        elif current[0] not in settings.activities or await _expired(
+            ctx.db, bot_id=ctx.bottle.id,
+        ):
             activity = _pick_activity(settings.activities, exclude=current[0])
             ttl = random.randint(settings.min_minutes, settings.max_minutes)
             await _seed(ctx.db, bot_id=ctx.bottle.id, activity=activity, ttl_minutes=ttl)

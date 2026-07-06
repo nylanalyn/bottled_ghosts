@@ -472,6 +472,20 @@ async def migration_022(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_023(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE bot_lives_state (
+            bot_id INTEGER PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
+            current_activity TEXT NOT NULL,
+            chosen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -483,6 +497,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_020,
     migration_021,
     migration_022,
+    migration_023,
 )
 
 

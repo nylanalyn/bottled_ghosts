@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 022.
+The schema below reflects migration 023.
 
 ## schema_migrations
 
@@ -114,6 +114,10 @@ Stores the last successful emergency alert time per Bottle and IRC location for 
 
 Stores the optional anti-repeat module's per-channel flag. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `flag_for_next_prompt INTEGER NOT NULL DEFAULT 0` (CHECK 0 or 1), `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. The flag is set in `after_response` when a reply is too similar to a recent one (Sørensen–Dice over token bigrams, default ≥0.70) and consumed and cleared by the next `before_prompt`, which then injects a stronger "vary your angle" note. The bot's recent replies themselves are read on demand from `messages`, not stored here.
 
+## bot_lives_state
+
+Stores the optional bot-lives module's per-bot current off-channel activity. Columns: `bot_id INTEGER PRIMARY KEY`, `current_activity TEXT NOT NULL`, `chosen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `expires_at TEXT NOT NULL`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. One row per bot (global, not per-channel). On each `before_prompt`, the module reads the row; if absent or `expires_at <= CURRENT_TIMESTAMP`, it picks a fresh activity from the configured pool and upserts with a randomized future `expires_at`. The activity is injected into the prompt as off-channel flavor ("you're currently X") and never as a topic.
+
 ## maintenance_events
 
 Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY KEY`, `actor TEXT NOT NULL`, `action TEXT NOT NULL`, `details TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. The `maintenance_events_no_update` and `maintenance_events_no_delete` triggers enforce append-only storage.
@@ -142,3 +146,4 @@ Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY K
 - 020: Add append-only maintenance history for explicit retention jobs.
 - 021: Add OpenAI-compatible frequency and presence penalty fields to LLM profiles, defaulting to 0.0 so existing Bottles keep their wire shape.
 - 022: Add per-channel flag state for the optional anti-repeat module.
+- 023: Add per-bot current-activity state for the optional bot-lives module.

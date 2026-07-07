@@ -183,6 +183,7 @@ class BottledGhostsApp(App[None]):
                     for label, field_id, input_type in (
                         ("Bottle name", "config-name", "text"),
                         ("Soul prompt path", "config-soul", "text"),
+                        ("Local time zone (e.g. America/New_York)", "config-timezone", "text"),
                         ("IRC network name", "config-network", "text"),
                         ("IRC server host", "config-host", "text"),
                         ("IRC server port", "config-port", "integer"),
@@ -664,6 +665,7 @@ class BottledGhostsApp(App[None]):
         values = {
             "config-name": settings.name,
             "config-soul": str(settings.soul_prompt_path),
+            "config-timezone": settings.timezone,
             "config-network": settings.network,
             "config-host": settings.host,
             "config-port": str(settings.port),
@@ -697,6 +699,7 @@ class BottledGhostsApp(App[None]):
         return BottleSettings(
             id=bottle_id,
             name=value("config-name"), soul_prompt_path=Path(value("config-soul")),
+            timezone=value("config-timezone"),
             network=value("config-network"), host=value("config-host"),
             port=int(value("config-port")),
             tls=self.query_one("#config-tls", Checkbox).value,
@@ -745,6 +748,7 @@ class BottledGhostsApp(App[None]):
                     max_lines=settings.max_lines, max_chars=settings.max_chars,
                     cooldown_seconds=settings.cooldown_seconds,
                     listen_window_seconds=settings.listen_window_seconds,
+                    timezone=settings.timezone,
                     actor=self.actor,
                 )
                 self.selected_bottle_id = created_id
@@ -766,7 +770,8 @@ class BottledGhostsApp(App[None]):
     def action_new_configuration(self) -> None:
         self.creating_bottle = True
         defaults = {
-            "config-name": "", "config-soul": "", "config-network": "",
+            "config-name": "", "config-soul": "", "config-timezone": "UTC",
+            "config-network": "",
             "config-host": "", "config-port": "6697", "config-nick": "",
             "config-username": "", "config-realname": "", "config-channels": "",
             "config-user-modes": "",

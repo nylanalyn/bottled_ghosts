@@ -11,6 +11,7 @@ def build_prompt(
     *, soul: str, module_state: list[str], memories: list[str], dreams: list[str],
     relevant: list[tuple[str, str]], history: list[tuple[str, str]], speaker: str, body: str,
     bot_nicks: tuple[str, ...] = (),
+    local_time: str | None = None,
 ) -> list[dict[str, str]]:
     """Assemble a chat-completions prompt from character state and IRC history.
 
@@ -26,6 +27,11 @@ def build_prompt(
         "be artificially brief. Use plain text only. Do not prefix your reply with "
         "your IRC nickname or format it as an IRC transcript line."
     )
+    if local_time is not None:
+        rules += (
+            f" Your local date and time is {local_time}. "
+            "Treat this as background context and mention it only when relevant."
+        )
     bot_identity = {irc_casefold(nick) for nick in bot_nicks}
 
     def is_bot(speaker: str) -> bool:

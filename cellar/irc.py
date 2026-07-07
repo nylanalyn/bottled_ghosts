@@ -73,7 +73,11 @@ def parse_privmsg(line: str) -> IncomingIRCMessage | None:
     nick, separator, hostmask = prefix.partition("!")
     account = tags.get("account")
     if body.startswith("\x01") and body.endswith("\x01"):
-        return None
+        ctcp_payload = body[1:-1]
+        ctcp_command, separator, ctcp_body = ctcp_payload.partition(" ")
+        if ctcp_command.upper() != "ACTION" or not separator or not ctcp_body.strip():
+            return None
+        body = f"/me {ctcp_body}"
     body = IRC_FORMATTING_RE.sub("", body)
     return IncomingIRCMessage(nick=nick, hostmask=hostmask if separator else None,
                               account=account if account and account != "*" else None,

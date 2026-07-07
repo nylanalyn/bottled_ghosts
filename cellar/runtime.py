@@ -7,6 +7,7 @@ from pathlib import Path
 import aiosqlite
 
 from cellar.irc import IRCAuthenticationError, IRCClient, irc_casefold, mentions_any_nick
+from cellar.local_time import local_datetime_context
 from cellar.admin_store import response_enabled
 from cellar.identity import resolve_user_identity
 from cellar.ignore_store import matching_ignore_action
@@ -91,6 +92,7 @@ async def run_bottle_once(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,
             dreams=dreams, relevant=relevant, history=history, speaker=speaker, body=body,
             bot_nicks=(active_nick(),),
+            local_time=local_datetime_context(bottle.timezone),
         )
         response = await complete(bottle.llm, prompt)
         module_context.response = response

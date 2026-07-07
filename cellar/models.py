@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -74,7 +75,16 @@ class Bottle(BaseModel):
     cooldown_seconds: float = Field(default=1.0, ge=0)
     listen_window_seconds: float = Field(default=8.0, gt=0)
     extract_memories: bool = False
+    timezone: str = "UTC"
     aliases: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_timezone(self) -> "Bottle":
+        try:
+            ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError(f"unknown IANA time zone: {self.timezone}") from error
+        return self
 
     @property
     def address_names(self) -> tuple[str, ...]:

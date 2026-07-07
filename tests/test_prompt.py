@@ -13,6 +13,18 @@ def test_system_message_carries_rules_and_soul() -> None:
     assert result[0]["content"].endswith("Be spectral.")
 
 
+def test_system_message_carries_local_time_as_background_context() -> None:
+    result = build_prompt(
+        soul="Be spectral.", module_state=[], memories=[], dreams=[], relevant=[],
+        history=[], speaker="bob", body="hi", bot_nicks=("ghost",),
+        local_time="Tuesday, July 7, 2026 at 14:30 (EDT, UTC-04:00)",
+    )
+
+    system = result[0]["content"]
+    assert "Your local date and time is Tuesday, July 7, 2026 at 14:30" in system
+    assert "mention it only when relevant" in system
+
+
 def test_context_blocks_and_current_message_land_in_final_user_turn() -> None:
     result = build_prompt(
         soul="Be spectral.", module_state=["IRC location: test #cellar"],

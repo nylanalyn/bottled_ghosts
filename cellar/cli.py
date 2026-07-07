@@ -83,11 +83,12 @@ async def async_main(args: argparse.Namespace) -> None:
                   else "Alternate nicks are unchanged")
         elif args.command == "configure":
             (name, soul, irc, llm, max_lines, max_chars, cooldown, listen_window,
-             extract_memories) = collect_configuration()
+             extract_memories, timezone) = collect_configuration()
             created_id = await create_bottle(
                 db, name=name, soul_prompt_path=soul, irc=irc, llm=llm,
                 max_lines=max_lines, max_chars=max_chars, cooldown_seconds=cooldown,
                 listen_window_seconds=listen_window, extract_memories=extract_memories,
+                timezone=timezone,
                 actor=args.actor,
             )
             print(f"Created Bottle {created_id}: {name}")

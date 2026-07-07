@@ -3,6 +3,8 @@ from pathlib import Path
 
 import aiosqlite
 from pydantic import BaseModel, Field
+from pydantic import field_validator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 class BottleSettings(BaseModel):
@@ -28,6 +30,16 @@ class BottleSettings(BaseModel):
     max_chars: int = Field(ge=1, le=450)
     cooldown_seconds: float = Field(ge=0)
     listen_window_seconds: float = Field(gt=0)
+    timezone: str = Field(min_length=1)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError(f"unknown IANA time zone: {value}") from error
+        return value
 
 
 async def load_bottle_settings(
@@ -35,7 +47,7 @@ async def load_bottle_settings(
 ) -> BottleSettings:
     row = await (await db.execute(
         """SELECT b.id, b.name, b.soul_prompt_path, b.max_lines, b.max_chars,
-                  b.cooldown_seconds, b.listen_window_seconds,
+                  b.cooldown_seconds, b.listen_window_seconds, b.timezone,
                   i.network, i.host, i.port, i.tls, i.nick,
                   i.username, i.realname, i.channels, l.endpoint, l.model,
                   i.user_modes, l.temperature, l.max_tokens, l.frequency_penalty,
@@ -73,11 +85,12 @@ async def save_bottle_settings(
         await db.execute("BEGIN IMMEDIATE")
         await db.execute(
             """UPDATE bots SET name = ?, soul_prompt_path = ?, max_lines = ?,
-                   max_chars = ?, cooldown_seconds = ?, listen_window_seconds = ?
+                   max_chars = ?, cooldown_seconds = ?, listen_window_seconds = ?,
+                   timezone = ?
                WHERE id = ?""",
             (settings.name, str(settings.soul_prompt_path), settings.max_lines,
              settings.max_chars, settings.cooldown_seconds,
-             settings.listen_window_seconds, settings.id),
+             settings.listen_window_seconds, settings.timezone, settings.id),
         )
         await db.execute(
             """UPDATE irc_profiles SET network = ?, host = ?, port = ?, tls = ?, nick = ?,

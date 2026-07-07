@@ -33,12 +33,13 @@ def ask_bool(prompt: str, default: bool) -> bool:
 
 
 def collect_configuration(
-) -> tuple[str, Path, IRCProfile, LLMProfile, int, int, float, float, bool]:
+) -> tuple[str, Path, IRCProfile, LLMProfile, int, int, float, float, bool, str]:
     print("Bottle identity")
     name = ask("Bottle name")
     soul_path = Path(ask("Soul prompt path"))
     if not soul_path.is_file():
         raise ValueError(f"soul prompt does not exist: {soul_path}")
+    timezone = ask("IANA time zone (e.g. America/New_York)", "UTC")
 
     print("\nIRC connection")
     network = ask("Network name")
@@ -85,4 +86,5 @@ def collect_configuration(
     return (
         name, soul_path, irc, llm, max_lines, max_chars, cooldown, listen_window,
         extract_memories,
+        timezone,
     )

@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 023.
+The schema below reflects migration 024.
 
 ## schema_migrations
 
@@ -18,7 +18,9 @@ Stores OpenAI-compatible HTTP configuration. Columns: `id INTEGER PRIMARY KEY`, 
 
 ## bots
 
-Stores bottle definitions and enforced output limits. Columns: `id INTEGER PRIMARY KEY`, `name TEXT NOT NULL UNIQUE`, `enabled INTEGER NOT NULL`, `soul_prompt_path TEXT NOT NULL`, `llm_profile_id INTEGER NOT NULL`, `irc_profile_id INTEGER NOT NULL`, `max_lines INTEGER NOT NULL`, `max_chars INTEGER NOT NULL`, `cooldown_seconds REAL NOT NULL`, `listen_window_seconds REAL NOT NULL DEFAULT 8.0`, `extract_memories INTEGER NOT NULL DEFAULT 0`.
+Stores bottle definitions and enforced output limits. Columns: `id INTEGER PRIMARY KEY`, `name TEXT NOT NULL UNIQUE`, `enabled INTEGER NOT NULL`, `soul_prompt_path TEXT NOT NULL`, `llm_profile_id INTEGER NOT NULL`, `irc_profile_id INTEGER NOT NULL`, `max_lines INTEGER NOT NULL`, `max_chars INTEGER NOT NULL`, `cooldown_seconds REAL NOT NULL`, `listen_window_seconds REAL NOT NULL DEFAULT 8.0`, `extract_memories INTEGER NOT NULL DEFAULT 0`, `timezone TEXT NOT NULL DEFAULT 'UTC'`.
+
+`timezone` is a validated IANA time-zone identifier used to calculate fresh local date/time prompt context.
 
 Foreign keys: `llm_profile_id` references `llm_profiles(id)`; `irc_profile_id` references `irc_profiles(id)`.
 
@@ -147,3 +149,4 @@ Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY K
 - 021: Add OpenAI-compatible frequency and presence penalty fields to LLM profiles, defaulting to 0.0 so existing Bottles keep their wire shape.
 - 022: Add per-channel flag state for the optional anti-repeat module.
 - 023: Add per-bot current-activity state for the optional bot-lives module.
+- 024: Add the per-Bottle IANA time zone used for local date and time prompt context.

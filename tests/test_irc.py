@@ -32,11 +32,20 @@ def test_parse_privmsg_with_account_tag() -> None:
     assert message.account == "alice"
 
 
-def test_parse_privmsg_strips_formatting_and_ignores_ctcp() -> None:
+def test_parse_privmsg_strips_formatting_and_ignores_non_action_ctcp() -> None:
     message = parse_privmsg(":alice!u@h PRIVMSG #cellar :\x02bold\x0f \x0312blue")
     assert message is not None
     assert message.body == "bold blue"
     assert parse_privmsg(":alice!u@h PRIVMSG ghost :\x01VERSION\x01") is None
+
+
+def test_parse_privmsg_accepts_ctcp_action() -> None:
+    message = parse_privmsg(
+        ":alice!u@h PRIVMSG #cellar :\x01ACTION pokes frauderick\x01"
+    )
+
+    assert message is not None
+    assert message.body == "/me pokes frauderick"
 
 
 def test_ignore_other_commands() -> None:

@@ -1,6 +1,7 @@
 import json
 import re
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiosqlite
 
@@ -51,6 +52,7 @@ def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
         cooldown_seconds=row["cooldown_seconds"],
         listen_window_seconds=row["listen_window_seconds"],
         extract_memories=bool(row["extract_memories"]),
+        timezone=row["timezone"],
         aliases=json.loads(row["aliases"]),
         irc=IRCProfile(network=row["network"], host=row["host"], port=row["port"],
             tls=bool(row["tls"]), nick=row["nick"], username=row["username"],
@@ -109,9 +111,14 @@ async def create_bottle(
     cooldown_seconds: float = 1.0,
     listen_window_seconds: float = 8.0,
     extract_memories: bool = False,
+    timezone: str = "UTC",
     actor: str = "operator",
 ) -> int:
     """Persist one complete Bottle configuration as a visible transaction."""
+    try:
+        ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise ValueError(f"unknown IANA time zone: {timezone}") from error
     try:
         irc_cursor = await db.execute(
             """INSERT INTO irc_profiles(
@@ -135,11 +142,11 @@ async def create_bottle(
             """INSERT INTO bots(
                    name, soul_prompt_path, llm_profile_id, irc_profile_id,
                    max_lines, max_chars, cooldown_seconds, listen_window_seconds,
-                   extract_memories
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   extract_memories, timezone
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (name, str(soul_prompt_path), llm_cursor.lastrowid, irc_cursor.lastrowid,
              max_lines, max_chars, cooldown_seconds, listen_window_seconds,
-             extract_memories),
+             extract_memories, timezone),
         )
         if bottle_cursor.lastrowid is None:
             raise RuntimeError("SQLite did not return a Bottle id")
@@ -174,6 +181,7 @@ async def create_bottle(
                     "cooldown_seconds": cooldown_seconds,
                     "listen_window_seconds": listen_window_seconds,
                     "extract_memories": extract_memories,
+                    "timezone": timezone,
                 }, sort_keys=True)),
         )
         await db.commit()

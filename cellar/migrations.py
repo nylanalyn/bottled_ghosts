@@ -486,6 +486,12 @@ async def migration_023(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_024(db: aiosqlite.Connection) -> None:
+    await db.execute(
+        "ALTER TABLE bots ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -498,6 +504,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_021,
     migration_022,
     migration_023,
+    migration_024,
 )
 
 

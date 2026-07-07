@@ -34,9 +34,11 @@ async def test_migration_configuration_and_logging(tmp_path) -> None:
             irc=IRCProfile(network="local", host="irc.example", nick="ghost",
                            username="ghost", realname="Ghost", channels=["#test"]),
             llm=LLMProfile(endpoint="http://localhost/chat", model="test-model"),
+            timezone="America/New_York",
         )
         bottle = await load_bottle(db, bottle_id)
         assert bottle.irc.channels == ["#test"]
+        assert bottle.timezone == "America/New_York"
         summaries = await list_bottles(db)
         assert [(item.id, item.name, item.enabled) for item in summaries] == [(1, "test", True)]
         assert [item.id for item in await load_enabled_bottles(db)] == [bottle_id]

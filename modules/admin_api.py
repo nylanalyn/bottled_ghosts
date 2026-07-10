@@ -11,6 +11,16 @@ from cellar.admin_store import (
     set_response_enabled,
 )
 from cellar.module_api import ModuleContext, NightlyContext, RuntimeContext
+from modules.moods import mood_status_line
+
+
+def _active_module_names(
+    module_settings: dict[str, dict[str, object]], failed_modules: dict[str, str],
+) -> tuple[str, ...]:
+    return tuple(
+        name for name in sorted(module_settings)
+        if name not in failed_modules
+    )
 
 
 class Module:
@@ -94,16 +104,18 @@ class Module:
         async with ctx.database_lock:
             if command == "help":
                 messages = [
-                    "help - this message\nstatus - Bottle status\nmodel - current LLM model\n"
+                    "help - this message\nstatus - Bottle status, active modules, and mood when the moods module is active\nmodel - current LLM model\n"
                     "off - stop public model responses\non - resume public model responses"
                 ]
             elif command == "status":
                 enabled = await response_enabled(ctx.db, bottle_id=ctx.bottle.id)
+                active_modules = _active_module_names(ctx.module_settings, ctx.state.failed_modules)
                 messages = [
                     "admin: connected\n"
                     f"irc: {'connected' if ctx.state.irc_connected else 'disconnected'}\n"
                     f"model: {ctx.bottle.llm.model}\n"
-                    f"responding: {'yes' if enabled else 'OFF (monitoring emergencies)'}"
+                    f"responding: {'yes' if enabled else 'OFF (monitoring emergencies)'}\n"
+                    f"modules: {', '.join(active_modules) if active_modules else 'none'}"
                 ]
                 if ctx.state.failed_modules:
                     failures = ", ".join(
@@ -111,6 +123,9 @@ class Module:
                         for name, hook in sorted(ctx.state.failed_modules.items())
                     )
                     messages[0] += f"\nmodules disabled after errors: {failures}"
+                mood_block = await mood_status_line(ctx.db, ctx.bottle.id)
+                if mood_block is not None:
+                    messages.append(mood_block)
             elif command == "model":
                 messages = [f"model: {ctx.bottle.llm.model}"]
             elif command in {"off", "on"}:

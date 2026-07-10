@@ -39,10 +39,46 @@ from cellar.storage import (
     set_llm_api_key,
     set_memory_extraction,
     set_sasl_credentials,
+    set_quit_message,
     set_server_password,
 )
 
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+logger = logging.getLogger(__name__)
 MEMORY_TYPES = ("preference", "project", "relationship", "identity", "temporary_state")
+
+
+async def _run_with_graceful_shutdown(args: argparse.Namespace) -> None:
+    """Run the async main task, converting SIGTERM into graceful cancellation.
+
+    systemd sends SIGTERM on ``systemctl restart``. Without this handler the
+    default SIGTERM behavior kills the process immediately, tearing down IRC
+    TLS connections without sending QUIT and producing TLS packet errors. By
+    cancelling the main task instead, the runtime's finally blocks send IRC
+    QUIT messages and close sockets cleanly before the process exits.
+    """
+    import signal
+
+    main_task = asyncio.current_task()
+    loop = asyncio.get_running_loop()
+
+    def _shutdown() -> None:
+        logger.info("received shutdown signal; cancelling tasks")
+        if main_task is not None:
+            main_task.cancel()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, _shutdown)
+        except NotImplementedError:
+            # Windows does not support add_signal_handler; SIGINT still works
+            # via KeyboardInterrupt.
+            pass
+
+    try:
+        await async_main(args)
+    except asyncio.CancelledError:
+        logger.info("shutdown complete")
 
 
 async def async_main(args: argparse.Namespace) -> None:
@@ -114,6 +150,11 @@ async def async_main(args: argparse.Namespace) -> None:
                 db, bottle_id=args.bottle_id, password=server_password, actor=args.actor,
             )
             print(f"Updated IRC server password for Bottle {args.bottle_id}")
+        elif args.command == "set-quit-message":
+            await set_quit_message(
+                db, bottle_id=args.bottle_id, message=args.message, actor=args.actor,
+            )
+            print(f"Updated quit message for Bottle {args.bottle_id}")
         elif args.command == "memory-extraction":
             enabled = args_enabled(args.state)
             await set_memory_extraction(
@@ -286,6 +327,12 @@ def main() -> None:
     api_key_parser = commands.add_parser("set-api-key", help="set or clear an LLM API key")
     api_key_parser.add_argument("bottle_id", type=int)
     api_key_parser.add_argument("--actor", default="operator")
+    quit_message_parser = commands.add_parser(
+        "set-quit-message", help="set the IRC QUIT message for a Bottle"
+    )
+    quit_message_parser.add_argument("bottle_id", type=int)
+    quit_message_parser.add_argument("message", help="QUIT message text")
+    quit_message_parser.add_argument("--actor", default="operator")
     server_password = commands.add_parser(
         "set-server-password", help="set or clear an IRC server password"
     )
@@ -384,4 +431,7 @@ def main() -> None:
 
         run_tui(args.database, actor=args.actor)
         return
-    asyncio.run(async_main(args))
+    try:
+        asyncio.run(_run_with_graceful_shutdown(args))
+    except KeyboardInterrupt:
+        pass

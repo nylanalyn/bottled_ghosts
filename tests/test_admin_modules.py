@@ -6,11 +6,23 @@ from aiohttp import ClientSession
 from cellar.admin_store import consume_admin_events, enqueue_admin_event, response_enabled, set_admin_api_token, set_response_enabled
 from cellar.models import IncomingIRCMessage, IRCProfile, LLMProfile
 from cellar.module_api import ModuleContext, RuntimeContext, RuntimeState
+from cellar.module_store import set_module_enabled
 from cellar.storage import create_bottle, load_bottle, open_database
 from cellar.storage import log_message
 from cellar.models import IRCMessage
-from modules.admin_api import Module as AdminAPIModule
+from modules.admin_api import Module as AdminAPIModule, _active_module_names
 from modules.emergency_alert import Module as EmergencyAlertModule
+
+
+def test_active_module_names_excludes_failed_modules() -> None:
+    assert _active_module_names(
+        {
+            "moods": {},
+            "admin_api": {},
+            "emergency_alert": {},
+        },
+        {"emergency_alert": "on_message"},
+    ) == ("admin_api", "moods")
 
 
 async def _bottle(db, tmp_path):
@@ -107,7 +119,43 @@ async def test_admin_api_matches_legacy_contract(tmp_path) -> None:
                 assert denied.status == 401
                 headers = {"Authorization": "Bearer secret"}
                 status = await session.post(f"http://127.0.0.1:{port}/v1/command", json={"command": "status", "args": ""}, headers=headers)
-                assert "irc: connected" in (await status.json())["messages"][0]
+                status_json = (await status.json())["messages"]
+                assert "irc: connected" in status_json[0]
+                assert "modules: admin_api" in status_json[0]
+                # With no mood_state row yet, status omits the mood block.
+                assert all("valence" not in m for m in status_json)
+
+                # Persist a mood reading, then status surfaces the mood block.
+                await db.execute(
+                    """INSERT INTO mood_state(
+                           bot_id, valence, irritability, interaction_heat,
+                           last_interaction_at, updated_at, last_event,
+                           last_valence_delta, last_irritability_delta
+                       ) VALUES (?, 0.4, -0.2, 3.0,
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'interaction', 0.4, -0.2)""",
+                    (bottle.id,),
+                )
+                await db.commit()
+                await set_module_enabled(
+                    db, bottle_id=bottle.id, module_name="moods", enabled=True,
+                    actor="test",
+                )
+                status2 = await session.post(f"http://127.0.0.1:{port}/v1/command", json={"command": "status", "args": ""}, headers=headers)
+                status2_json = (await status2.json())["messages"]
+                mood_messages = [m for m in status2_json if "valence" in m]
+                assert len(mood_messages) == 1
+                assert mood_messages[0].startswith("```")
+                assert "irritability" in mood_messages[0]
+                assert "heat" in mood_messages[0]
+
+                await set_module_enabled(
+                    db, bottle_id=bottle.id, module_name="moods", enabled=False,
+                    actor="test",
+                )
+                status3 = await session.post(f"http://127.0.0.1:{port}/v1/command", json={"command": "status", "args": ""}, headers=headers)
+                status3_json = (await status3.json())["messages"]
+                assert all("valence" not in m for m in status3_json)
+
                 off = await session.post(f"http://127.0.0.1:{port}/v1/command", json={"command": "off", "args": ""}, headers=headers)
                 assert off.status == 200
                 assert not await response_enabled(db, bottle_id=bottle.id)

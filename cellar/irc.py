@@ -14,6 +14,7 @@ IRC_NICK_CHARACTERS = r"A-Za-z0-9\-\[\]\\`_^{|}~"
 IRC_REGISTRATION_TIMEOUT_SECONDS = 30.0
 IRC_IDLE_TIMEOUT_SECONDS = 300.0
 IRC_PONG_TIMEOUT_SECONDS = 60.0
+IRC_LINEBREAK_RE = re.compile(r"[\r\n]+")
 IRC_FORMATTING_RE = re.compile(
     r"\x03(?:\d{1,2}(?:,\d{1,2})?)?|\x04(?:[0-9A-Fa-f]{6}(?:,[0-9A-Fa-f]{6})?)?|"
     r"[\x00-\x02\x05-\x08\x0b\x0c\x0e-\x1f\x7f]"
@@ -52,6 +53,11 @@ def truncate_utf8(text: str, max_bytes: int) -> str:
     if len(encoded) <= max_bytes:
         return text
     return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def single_line_irc_text(text: str) -> str:
+    """Collapse line breaks before interpolating text into an IRC command."""
+    return IRC_LINEBREAK_RE.sub(" ", text).strip()
 
 
 def parse_privmsg(line: str) -> IncomingIRCMessage | None:
@@ -154,6 +160,27 @@ class IRCClient:
         if available < 1:
             raise ValueError("IRC message target leaves no room for a body")
         await self.send_raw(f"{prefix}{truncate_utf8(body, available)}")
+
+    async def quit(self, message: str | None = None) -> None:
+        """Send a graceful IRC QUIT before closing the connection.
+
+        Best-effort: sends a single sanitized QUIT line and attempts to drain it.
+        This avoids the TLS abrupt-close error that occurs when the connection is
+        torn down without telling the server.
+        """
+        if self.writer is None:
+            return
+        text = single_line_irc_text(message if message is not None else self.profile.quit_message)
+        if not text:
+            text = "Restarting"
+        prefix = "QUIT :"
+        available = IRC_PAYLOAD_BYTES - len(prefix.encode("utf-8"))
+        line = f"{prefix}{truncate_utf8(text, available)}"
+        try:
+            await asyncio.wait_for(self.send_raw(line), timeout=2.0)
+        except (ConnectionError, OSError, RuntimeError, TimeoutError, asyncio.CancelledError):
+            logger.warning("could not drain IRC QUIT on %s; closing anyway",
+                           self.profile.network)
 
     async def authenticate_sasl_plain(self) -> None:
         username = self.profile.sasl_username
@@ -307,7 +334,14 @@ class IRCClient:
         finally:
             if self.connection_state_handler is not None:
                 self.connection_state_handler(False)
-            self.writer.close()
-            await self.writer.wait_closed()
+            # Best-effort graceful QUIT before closing the socket. This avoids
+            # the TLS abrupt-close error that occurs when the connection is
+            # torn down without telling the server.
+            await self.quit()
+            try:
+                self.writer.close()
+                await asyncio.wait_for(self.writer.wait_closed(), timeout=2.0)
+            except (OSError, TimeoutError, asyncio.CancelledError):
+                pass
             self.writer = None
             logger.info("disconnected from %s", self.profile.network)

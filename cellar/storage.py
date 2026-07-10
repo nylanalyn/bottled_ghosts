@@ -29,9 +29,9 @@ async def load_bottle(db: aiosqlite.Connection, bottle_id: int) -> Bottle:
     cursor = await db.execute(
         """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
                   i.realname, i.channels, i.password, i.sasl_username,
-                  i.sasl_password, i.user_modes, i.alternate_nicks, l.endpoint, l.model,
-                  l.api_key, l.temperature, l.max_tokens, l.frequency_penalty,
-                  l.presence_penalty,
+                  i.sasl_password, i.user_modes, i.alternate_nicks, i.quit_message,
+                  l.endpoint, l.model, l.api_key, l.temperature, l.max_tokens,
+                  l.frequency_penalty, l.presence_penalty,
                   COALESCE((SELECT json_group_array(a.alias)
                             FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
@@ -59,7 +59,8 @@ def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
             realname=row["realname"], channels=json.loads(row["channels"]),
             password=row["password"], sasl_username=row["sasl_username"],
             sasl_password=row["sasl_password"], user_modes=row["user_modes"],
-            alternate_nicks=json.loads(row["alternate_nicks"])),
+            alternate_nicks=json.loads(row["alternate_nicks"]),
+            quit_message=row["quit_message"]),
         llm=LLMProfile(endpoint=row["endpoint"], model=row["model"],
             api_key=row["api_key"], temperature=row["temperature"], max_tokens=row["max_tokens"],
             frequency_penalty=row["frequency_penalty"],
@@ -87,9 +88,9 @@ async def load_enabled_bottles(db: aiosqlite.Connection) -> list[Bottle]:
     cursor = await db.execute(
         """SELECT b.*, i.network, i.host, i.port, i.tls, i.nick, i.username,
                   i.realname, i.channels, i.password, i.sasl_username,
-                  i.sasl_password, i.user_modes, i.alternate_nicks, l.endpoint, l.model,
-                  l.api_key, l.temperature, l.max_tokens, l.frequency_penalty,
-                  l.presence_penalty,
+                  i.sasl_password, i.user_modes, i.alternate_nicks, i.quit_message,
+                  l.endpoint, l.model, l.api_key, l.temperature, l.max_tokens,
+                  l.frequency_penalty, l.presence_penalty,
                   COALESCE((SELECT json_group_array(a.alias)
                             FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
@@ -123,12 +124,12 @@ async def create_bottle(
         irc_cursor = await db.execute(
             """INSERT INTO irc_profiles(
                    network, host, port, tls, nick, username, realname, channels, password,
-                   sasl_username, sasl_password, user_modes, alternate_nicks
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   sasl_username, sasl_password, user_modes, alternate_nicks, quit_message
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (irc.network, irc.host, irc.port, irc.tls, irc.nick, irc.username,
              irc.realname, json.dumps(irc.channels), irc.password,
              irc.sasl_username, irc.sasl_password, irc.user_modes,
-             json.dumps(irc.alternate_nicks)),
+             json.dumps(irc.alternate_nicks), irc.quit_message),
         )
         llm_cursor = await db.execute(
             """INSERT INTO llm_profiles(
@@ -170,6 +171,7 @@ async def create_bottle(
                     "channels": irc.channels,
                     "user_modes": irc.user_modes,
                     "alternate_nicks": irc.alternate_nicks,
+                    "quit_message": irc.quit_message,
                     "endpoint": llm.endpoint,
                     "model": llm.model,
                     "temperature": llm.temperature,
@@ -233,6 +235,27 @@ async def set_server_password(
         current_query="""SELECT i.password FROM irc_profiles i
                          JOIN bots b ON b.irc_profile_id = i.id WHERE b.id = ?""",
         new_values=(password,),
+    )
+
+
+async def set_quit_message(
+    db: aiosqlite.Connection, *, bottle_id: int, message: str, actor: str = "operator",
+) -> bool:
+    message = message.strip()
+    if not message:
+        raise ValueError("quit message cannot be empty")
+    if "\r" in message or "\n" in message:
+        raise ValueError("quit message must be a single line")
+    if len(message.encode("utf-8")) > 200:
+        raise ValueError("quit message must be 200 bytes or fewer")
+    return await _update_secret(
+        db, bottle_id=bottle_id, actor=actor, changed_field="quit_message",
+        query="""UPDATE irc_profiles SET quit_message = ?
+                 WHERE id = (SELECT irc_profile_id FROM bots WHERE id = ?)""",
+        parameters=(message, bottle_id),
+        current_query="""SELECT i.quit_message FROM irc_profiles i
+                         JOIN bots b ON b.irc_profile_id = i.id WHERE b.id = ?""",
+        new_values=(message,),
     )
 
 

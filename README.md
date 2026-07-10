@@ -91,8 +91,10 @@ bottled-ghosts module-toggle 1 admin_api on --actor aureate
 ```
 
 Point the router's bot entry at `http://127.0.0.1:9103` with the same token. The
-supported commands are `help`, `status`, `model`, `off`, and `on`. `off` leaves
-IRC connected and persistently suppresses public model responses.
+supported commands are `help`, `status`, `model`, `off`, and `on`. `status`
+shows IRC/model/response state, active modules, and mood when the moods module
+is active. `off` leaves IRC connected and persistently suppresses public model
+responses.
 
 Enable Rumi's addressed-message emergency monitoring separately:
 
@@ -129,6 +131,21 @@ bottled-ghosts module-settings 1 ambient_chat '{"min_lines":20,"max_lines":40}' 
 
 Ignored identities, private messages, and the Bottle's own messages do not count.
 All ambient replies still use normal listening windows and IRC safety limits.
+
+Give a Bottle a persistent two-axis mood with the optional moods module. Mood
+uses valence (depressed to ecstatic) and irritability (calm to angry), shifts
+with attention and sustained activity, and drifts back toward its configured
+baseline during quiet periods. Built-in profiles are `balanced`, `frauderick`,
+`aria`, `dog`, and `rumi`; any numeric weight may be overridden:
+
+```bash
+bottled-ghosts module-settings 1 moods '{"profile":"aria"}' --actor aureate
+bottled-ghosts module-toggle 1 moods on --actor aureate
+```
+
+The current values, interaction heat, and latest deltas are inspectable in
+SQLite's `mood_state` table. Mood updates are message-driven; no background
+scheduler or room-sentiment classifier runs.
 
 Dreaming is an explicit job rather than a hidden background scheduler:
 

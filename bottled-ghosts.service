@@ -1,0 +1,17 @@
+[Unit]
+Description=Bottled Ghosts IRC bots
+Documentation=file:///home/aureate/code/bottled_ghosts/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/aureate/code/bottled_ghosts
+ExecStart=/home/aureate/code/bottled_ghosts/.venv/bin/bottled-ghosts --database /home/aureate/code/bottled_ghosts/spirits.db run-all
+Restart=on-failure
+KillSignal=SIGTERM
+TimeoutStopSec=15s
+FinalKillSignal=SIGKILL
+
+[Install]
+WantedBy=default.target

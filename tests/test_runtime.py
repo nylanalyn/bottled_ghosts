@@ -457,3 +457,51 @@ async def test_ambient_module_requests_normal_runtime_response(monkeypatch, tmp_
         assert state is not None and tuple(state) == (0, 1)
     finally:
         await db.close()
+
+
+
+@pytest.mark.asyncio
+async def test_graceful_shutdown_cancels_main_task_on_sigterm(tmp_path) -> None:
+    """_run_with_graceful_shutdown converts SIGTERM into task cancellation."""
+    import argparse
+    import signal
+    from cellar.cli import _run_with_graceful_shutdown
+
+    started = asyncio.Event()
+    cancelled = False
+
+    class FakeDB:
+        async def close(self) -> None:
+            pass
+
+    async def fake_open_database(_path):
+        return FakeDB()
+
+    async def fake_async_main(_args):
+        # Simulate a long-running task that gets cancelled by SIGTERM
+        nonlocal cancelled
+        started.set()
+        try:
+            await asyncio.sleep(100)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+
+    # Monkeypatch the async_main and open_database used by the shutdown wrapper
+    import cellar.cli as cli_mod
+    original_async_main = cli_mod.async_main
+    original_open_database = cli_mod.open_database
+    cli_mod.async_main = fake_async_main
+    cli_mod.open_database = fake_open_database
+    try:
+        args = argparse.Namespace(command="run-all", database=tmp_path / "spirits.db")
+        task = asyncio.create_task(_run_with_graceful_shutdown(args))
+        await started.wait()
+        # Send SIGTERM to ourselves — the signal handler should cancel the task
+        import os
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(task, timeout=5.0)
+        assert cancelled, "main task should have been cancelled by SIGTERM"
+    finally:
+        cli_mod.async_main = original_async_main
+        cli_mod.open_database = original_open_database

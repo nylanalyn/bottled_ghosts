@@ -94,6 +94,14 @@ def test_user_modes_reject_protocol_injection() -> None:
         )
 
 
+def test_quit_message_rejects_protocol_injection() -> None:
+    with pytest.raises(ValidationError, match="single line"):
+        IRCProfile(
+            network="test", host="localhost", nick="ghost", username="ghost",
+            realname="Ghost", channels=["#test"], quit_message="bye\r\nJOIN #other",
+        )
+
+
 @pytest.mark.asyncio
 async def test_capabilities_are_requested_together(monkeypatch) -> None:
     class Reader:
@@ -332,3 +340,130 @@ async def test_user_modes_are_set_before_channel_join(monkeypatch) -> None:
 
     assert writer.lines.index("MODE ghost +B") < writer.lines.index("JOIN #one")
     assert writer.lines.index("MODE ghost +B") < writer.lines.index("JOIN #two")
+
+
+
+@pytest.mark.asyncio
+async def test_quit_sends_quit_message_before_closing() -> None:
+    """quit() writes the profile's quit_message as an IRC QUIT line."""
+    class Writer:
+        def __init__(self) -> None:
+            self.lines: list[str] = []
+        def write(self, data: bytes) -> None:
+            self.lines.append(data.decode().rstrip())
+        async def drain(self) -> None:
+            return None
+    async def handler(_message) -> None:
+        return None
+
+    client = IRCClient(
+        IRCProfile(network="test", host="localhost", tls=False, nick="ghost",
+                   username="ghost", realname="Ghost", channels=["#test"],
+                   quit_message="going down for maintenance"),
+        handler,
+    )
+    writer = Writer()
+    client.writer = writer  # type: ignore[assignment]
+    await client.quit()
+    assert writer.lines == ["QUIT :going down for maintenance"]
+
+
+@pytest.mark.asyncio
+async def test_quit_with_explicit_message_overrides_profile_default() -> None:
+    class Writer:
+        def __init__(self) -> None:
+            self.lines: list[str] = []
+        def write(self, data: bytes) -> None:
+            self.lines.append(data.decode().rstrip())
+        async def drain(self) -> None:
+            return None
+    async def handler(_message) -> None:
+        return None
+
+    client = IRCClient(
+        IRCProfile(network="test", host="localhost", tls=False, nick="ghost",
+                   username="ghost", realname="Ghost", channels=["#test"],
+                   quit_message="default message"),
+        handler,
+    )
+    writer = Writer()
+    client.writer = writer  # type: ignore[assignment]
+    await client.quit("custom goodbye")
+    assert writer.lines == ["QUIT :custom goodbye"]
+
+
+@pytest.mark.asyncio
+async def test_quit_collapses_line_breaks_in_explicit_message() -> None:
+    class Writer:
+        def __init__(self) -> None:
+            self.lines: list[str] = []
+        def write(self, data: bytes) -> None:
+            self.lines.append(data.decode().rstrip("\r\n"))
+        async def drain(self) -> None:
+            return None
+    async def handler(_message) -> None:
+        return None
+
+    client = IRCClient(
+        IRCProfile(network="test", host="localhost", tls=False, nick="ghost",
+                   username="ghost", realname="Ghost", channels=["#test"],
+                   quit_message="default message"),
+        handler,
+    )
+    writer = Writer()
+    client.writer = writer  # type: ignore[assignment]
+    await client.quit("custom\r\nJOIN #other")
+    assert writer.lines == ["QUIT :custom JOIN #other"]
+
+
+@pytest.mark.asyncio
+async def test_quit_does_nothing_when_not_connected() -> None:
+    async def handler(_message) -> None:
+        return None
+    client = IRCClient(
+        IRCProfile(network="test", host="localhost", tls=False, nick="ghost",
+                   username="ghost", realname="Ghost", channels=["#test"]),
+        handler,
+    )
+    # writer is None; quit should return without error
+    await client.quit()
+
+
+@pytest.mark.asyncio
+async def test_run_sends_quit_on_server_disconnect(monkeypatch) -> None:
+    """The run() finally block sends QUIT even when the server closes the connection."""
+    class Reader:
+        def __init__(self) -> None:
+            self.lines = iter([
+                b":server 001 ghost :welcome\r\n",
+                b"",  # server closed connection
+            ])
+        async def readline(self) -> bytes:
+            return next(self.lines)
+    class Writer:
+        def __init__(self) -> None:
+            self.lines: list[str] = []
+        def write(self, data: bytes) -> None:
+            self.lines.append(data.decode().rstrip())
+        async def drain(self) -> None:
+            return None
+        def close(self) -> None:
+            return None
+        async def wait_closed(self) -> None:
+            return None
+    reader, writer = Reader(), Writer()
+    async def open_connection(*_args, **_kwargs):
+        return reader, writer
+    async def handler(_message) -> None:
+        return None
+    monkeypatch.setattr("cellar.irc.asyncio.open_connection", open_connection)
+    client = IRCClient(
+        IRCProfile(network="test", host="localhost", tls=False, nick="ghost",
+                   username="ghost", realname="Ghost", channels=["#test"],
+                   quit_message="goodbye from test"),
+        handler,
+    )
+    with pytest.raises(ConnectionError):
+        await client.run()
+    # QUIT was sent in the finally block before close
+    assert "QUIT :goodbye from test" in writer.lines

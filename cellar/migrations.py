@@ -492,6 +492,32 @@ async def migration_024(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_025(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE mood_state (
+            bot_id INTEGER PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
+            valence REAL NOT NULL CHECK (valence BETWEEN -1.0 AND 1.0),
+            irritability REAL NOT NULL CHECK (irritability BETWEEN -1.0 AND 1.0),
+            interaction_heat REAL NOT NULL DEFAULT 0.0 CHECK (interaction_heat >= 0.0),
+            last_interaction_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_event TEXT NOT NULL DEFAULT 'initial' CHECK (
+                last_event IN ('initial', 'interaction')
+            ),
+            last_valence_delta REAL NOT NULL DEFAULT 0.0,
+            last_irritability_delta REAL NOT NULL DEFAULT 0.0
+        );
+        """
+    )
+
+
+
+async def migration_026(db: aiosqlite.Connection) -> None:
+    await db.execute(
+        "ALTER TABLE irc_profiles ADD COLUMN quit_message TEXT NOT NULL DEFAULT 'Restarting — back soon.'"
+    )
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -505,6 +531,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_022,
     migration_023,
     migration_024,
+    migration_025,
+    migration_026,
 )
 
 

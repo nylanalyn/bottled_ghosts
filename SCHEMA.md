@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 024.
+The schema below reflects migration 026.
 
 ## schema_migrations
 
@@ -8,7 +8,7 @@ Records applied schema versions. Columns: `version INTEGER PRIMARY KEY`, `applie
 
 ## irc_profiles
 
-Stores IRC connection configuration. Columns: `id INTEGER PRIMARY KEY`, `network TEXT NOT NULL`, `host TEXT NOT NULL`, `port INTEGER NOT NULL`, `tls INTEGER NOT NULL`, `nick TEXT NOT NULL`, `username TEXT NOT NULL`, `realname TEXT NOT NULL`, `channels TEXT NOT NULL`, `password TEXT`, `sasl_username TEXT`, `sasl_password TEXT`, `user_modes TEXT NOT NULL DEFAULT ''`, `alternate_nicks TEXT NOT NULL DEFAULT '[]'`.
+Stores IRC connection configuration. Columns: `id INTEGER PRIMARY KEY`, `network TEXT NOT NULL`, `host TEXT NOT NULL`, `port INTEGER NOT NULL`, `tls INTEGER NOT NULL`, `nick TEXT NOT NULL`, `username TEXT NOT NULL`, `realname TEXT NOT NULL`, `channels TEXT NOT NULL`, `password TEXT`, `sasl_username TEXT`, `sasl_password TEXT`, `user_modes TEXT NOT NULL DEFAULT ''`, `alternate_nicks TEXT NOT NULL DEFAULT '[]'`, `quit_message TEXT NOT NULL DEFAULT 'Restarting — back soon.'`.
 
 `channels` and `alternate_nicks` are JSON-encoded lists inside SQLite; SQLite remains canonical.
 
@@ -124,6 +124,10 @@ Stores the optional bot-lives module's per-bot current off-channel activity. Col
 
 Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY KEY`, `actor TEXT NOT NULL`, `action TEXT NOT NULL`, `details TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. The `maintenance_events_no_update` and `maintenance_events_no_delete` triggers enforce append-only storage.
 
+## mood_state
+
+Stores the optional moods module's global per-Bottle state. Columns: `bot_id INTEGER PRIMARY KEY`, `valence REAL NOT NULL` (CHECK from -1.0 depressed to 1.0 ecstatic), `irritability REAL NOT NULL` (CHECK from -1.0 calm to 1.0 angry), `interaction_heat REAL NOT NULL DEFAULT 0.0` (CHECK nonnegative), `last_interaction_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_event TEXT NOT NULL DEFAULT 'initial'` (`initial` or `interaction`), `last_valence_delta REAL NOT NULL DEFAULT 0.0`, `last_irritability_delta REAL NOT NULL DEFAULT 0.0`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Updates happen lazily on incoming messages: elapsed time decays heat, pulls both axes toward configured baselines, applies bounded quiet-time loss and random drift, then applies attention and overload effects. The last event and deltas expose the most recent mutation for inspection.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -150,3 +154,5 @@ Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY K
 - 022: Add per-channel flag state for the optional anti-repeat module.
 - 023: Add per-bot current-activity state for the optional bot-lives module.
 - 024: Add the per-Bottle IANA time zone used for local date and time prompt context.
+- 025: Add persistent two-axis mood state, interaction heat, and inspectable last-change metadata.
+- 026: Add per-profile IRC quit message for graceful shutdown.

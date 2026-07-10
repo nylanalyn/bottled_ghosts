@@ -23,6 +23,7 @@ class IRCProfile(BaseModel):
     sasl_password: str | None = None
     user_modes: str = ""
     alternate_nicks: list[str] = Field(default_factory=list)
+    quit_message: str = "Restarting — back soon."
 
     @model_validator(mode="after")
     def validate_sasl_credentials(self) -> "IRCProfile":
@@ -47,6 +48,16 @@ class IRCProfile(BaseModel):
             if folded in seen:
                 raise ValueError("alternate nicks must be unique and differ from the primary nick")
             seen.add(folded)
+        return self
+
+    @model_validator(mode="after")
+    def validate_quit_message(self) -> "IRCProfile":
+        if not self.quit_message.strip():
+            raise ValueError("IRC quit message cannot be empty")
+        if "\r" in self.quit_message or "\n" in self.quit_message:
+            raise ValueError("IRC quit message must be a single line")
+        if len(self.quit_message.encode("utf-8")) > 200:
+            raise ValueError("IRC quit message must be 200 bytes or fewer")
         return self
 
 

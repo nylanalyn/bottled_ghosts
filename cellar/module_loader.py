@@ -10,6 +10,7 @@ from modules.bot_lives import Module as BotLivesModule
 from modules.channel_context import Module as ChannelContextModule
 from modules.ambient_chat import Module as AmbientChatModule
 from modules.fishing import Module as FishingModule
+from modules.moods import Module as MoodsModule
 from modules.admin_api import Module as AdminAPIModule
 from modules.emergency_alert import Module as EmergencyAlertModule
 
@@ -24,6 +25,7 @@ REGISTRY: tuple[tuple[str, ModuleFactory], ...] = (
     ("channel_context", ChannelContextModule),
     ("emergency_alert", EmergencyAlertModule),
     ("fishing", FishingModule),
+    ("moods", MoodsModule),
 )
 
 

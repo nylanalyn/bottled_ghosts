@@ -187,6 +187,12 @@ async def run_bottle_once(
                 db=db, bottle=bottle, message=message, user_id=user_id,
                 source_message_id=message_id, conversation=conversation,
                 bot_nick=active_nick(), response_allowed=ignore_action is None,
+                response_reason=(
+                    "addressed"
+                    if direct_message
+                    or mentions_any_nick(message.body, (active_nick(), *bottle.address_names))
+                    else "ambient"
+                ),
             )
             await modules.on_message(module_context)
             commands = list(module_context.commands)

@@ -39,6 +39,7 @@ class WindowMessage:
     message_id: int
     conversation: str
     addressed: bool
+    response_reason: str
     identity_confidence: float
 
 
@@ -67,9 +68,11 @@ async def run_bottle_once(
         module_context = ModuleContext(
             db=db, bottle=bottle, message=message, user_id=user_id,
             source_message_id=latest.message_id,
-            conversation=channel, bot_nick=active_nick(),
             response_reason=(
-                "addressed" if any(item.addressed for item in items) else "ambient"
+                "addressed" if any(item.addressed for item in items)
+                else "utility_event"
+                if any(item.response_reason == "utility_event" for item in items)
+                else "ambient"
             ),
         )
         logger.info("generating reply to %s in %s", speaker, reply_target)
@@ -213,13 +216,20 @@ async def run_bottle_once(
         key = (irc_casefold(conversation), user_id)
         address_names = (active_nick(), *bottle.address_names)
         addressed = direct_message or mentions_any_nick(message.body, address_names)
-        should_respond = windows.contains(key) or addressed or module_context.request_response
+        if module_context.request_response:
+            should_respond = True
+        elif module_context.suppress_automatic_response:
+            should_respond = False
+        else:
+            should_respond = windows.contains(key) or addressed
         should_monitor = not replies_enabled and module_context.monitor_when_silent
         if (replies_enabled and should_respond) or should_monitor:
             windows.add(
                 key, WindowMessage(
                     message=message, user_id=user_id, message_id=message_id,
-                    conversation=conversation, addressed=addressed,
+                    conversation=conversation,
+                    addressed=addressed and not module_context.suppress_automatic_response,
+                    response_reason=module_context.response_reason,
                     identity_confidence=resolved.confidence,
                 )
             )

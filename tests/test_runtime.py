@@ -459,6 +459,90 @@ async def test_ambient_module_requests_normal_runtime_response(monkeypatch, tmp_
         await db.close()
 
 
+@pytest.mark.asyncio
+async def test_utility_event_reaction_survives_addressed_veto(monkeypatch, tmp_path) -> None:
+    database = tmp_path / "utility-runtime.db"
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(database)
+    bottle_id = await create_bottle(
+        db, name="test", soul_prompt_path=soul,
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost", channels=["#test"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+        cooldown_seconds=0, listen_window_seconds=0.01,
+    )
+    await set_module_enabled(
+        db, bottle_id=bottle_id, module_name="ambient_chat", enabled=True,
+    )
+    await set_module_settings(
+        db, bottle_id=bottle_id, module_name="ambient_chat",
+        settings={
+            "min_lines": 20, "max_lines": 40,
+            "utility_bot_nicks": ["Jeeves"],
+            "utility_min_lines": 2, "utility_max_lines": 2,
+        },
+        actor="test",
+    )
+    bottle = await load_bottle(db, bottle_id)
+    sent: list[tuple[str, str]] = []
+    prompts: list[list[dict[str, str]]] = []
+
+    class FakeIRCClient:
+        def __init__(self, _profile, handler) -> None:
+            self.handler = handler
+
+        async def run(self) -> None:
+            # Generic roadtrip announcement: names neither the active nick nor
+            # an alias, so it must never reach generation.
+            await self.handler(IncomingIRCMessage(
+                nick="Jeeves", hostmask="j@host", account=None,
+                target="#test", body="The roadtrip caravan rolls past town.",
+            ))
+            # First Bottle-naming event: advances the utility counter but does
+            # not yet cross the deterministic 2-event threshold.
+            await self.handler(IncomingIRCMessage(
+                nick="Jeeves", hostmask="j@host", account=None,
+                target="#test", body="ghost, you caught a fish!",
+            ))
+            # Second matching event: crosses the threshold and requests one
+            # utility_event reaction despite the addressed-text veto.
+            await self.handler(IncomingIRCMessage(
+                nick="Jeeves", hostmask="j@host", account=None,
+                target="#test", body="ghost reeled in a big one",
+            ))
+            await asyncio.sleep(0.03)
+
+        async def send_message(self, target: str, body: str) -> None:
+            sent.append((target, body))
+
+    async def fake_complete(_profile, prompt: list[dict[str, str]]) -> str:
+        prompts.append(prompt)
+        return "nice catch"
+
+    monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+    monkeypatch.setattr("cellar.runtime.complete", fake_complete)
+
+    try:
+        await run_bottle_once(db, bottle)
+        # Exactly one outbound reply, sourced from the second matching event.
+        assert sent == [("#test", "nice catch")]
+        assert len(prompts) == 1
+        # The generic announcement was vetoed and never reached generation.
+        assert "occasional reaction" in prompts[0][1]["content"]
+        # Utility progress was reset when it triggered; normal cadence untouched.
+        state = await (await db.execute(
+            "SELECT eligible_lines_seen, next_trigger_line, "
+            "utility_lines_seen, next_utility_trigger_line "
+            "FROM ambient_chat_state"
+        )).fetchone()
+        assert state is not None
+        assert state["eligible_lines_seen"] == 0
+        assert state["utility_lines_seen"] == 0
+        assert state["next_utility_trigger_line"] == 2
+    finally:
+        await db.close()
+
 
 @pytest.mark.asyncio
 async def test_graceful_shutdown_cancels_main_task_on_sigterm(tmp_path) -> None:

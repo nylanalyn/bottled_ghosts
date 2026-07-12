@@ -530,6 +530,18 @@ async def migration_027(db: aiosqlite.Connection) -> None:
         """
     )
 
+async def migration_028(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        ALTER TABLE ambient_chat_state
+            ADD COLUMN utility_lines_seen INTEGER NOT NULL DEFAULT 0
+            CHECK (utility_lines_seen >= 0);
+        ALTER TABLE ambient_chat_state
+            ADD COLUMN next_utility_trigger_line INTEGER
+            CHECK (next_utility_trigger_line IS NULL OR next_utility_trigger_line > 0);
+        """
+    )
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -546,6 +558,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_025,
     migration_026,
     migration_027,
+    migration_028,
 )
 
 

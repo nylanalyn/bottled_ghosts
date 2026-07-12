@@ -28,8 +28,9 @@ class ModuleContext:
     bot_nick: str | None = None
     response_allowed: bool = True
     request_response: bool = False
+    suppress_automatic_response: bool = False
     monitor_when_silent: bool = False
-    response_reason: Literal["addressed", "ambient"] = "addressed"
+    response_reason: Literal["addressed", "ambient", "utility_event"] = "addressed"
     module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
     prompt_sections: list[str] = field(default_factory=list)
     commands: list[ModuleCommand] = field(default_factory=list)

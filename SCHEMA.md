@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 027.
+The schema below reflects migration 028.
 
 ## schema_migrations
 
@@ -78,7 +78,7 @@ Stores per-Bottle module enablement and future module settings. Columns: `bot_id
 
 ## ambient_chat_state
 
-Stores the ambient-chat module's persisted per-channel progress. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `eligible_lines_seen INTEGER NOT NULL DEFAULT 0`, `next_trigger_line INTEGER NOT NULL`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
+Stores the ambient-chat module's persisted per-channel progress. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `eligible_lines_seen INTEGER NOT NULL DEFAULT 0` (normal human-ambient line count), `next_trigger_line INTEGER NOT NULL` (random threshold at which a normal ambient reply fires), `utility_lines_seen INTEGER NOT NULL DEFAULT 0 CHECK (utility_lines_seen >= 0)` (count of matching channel events from configured utility bots), `next_utility_trigger_line INTEGER CHECK (next_utility_trigger_line IS NULL OR next_utility_trigger_line > 0)` (random 8–15 threshold for a rare utility-event reaction; `NULL` is the "no relevant utility event has initialized this channel yet" sentinel), `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
 
 ## fishing_state
 
@@ -161,3 +161,4 @@ Stores the optional moods module's global per-Bottle state. Columns: `bot_id INT
 - 025: Add persistent two-axis mood state, interaction heat, and inspectable last-change metadata.
 - 026: Add per-profile IRC quit message for graceful shutdown.
 - 027: Add persistent, audited per-Bottle away status for the Discord admin bridge.
+- 028: Add persisted, independently paced utility-bot event reactions to the optional ambient-chat module.

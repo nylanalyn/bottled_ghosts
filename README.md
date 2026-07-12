@@ -131,11 +131,19 @@ chat module. Its line counter and random threshold survive restarts:
 
 ```bash
 bottled-ghosts module-toggle 1 ambient_chat on --actor aureate
-bottled-ghosts module-settings 1 ambient_chat '{"min_lines":20,"max_lines":40}' --actor aureate
+bottled-ghosts module-settings 1 ambient_chat '{"min_lines":20,"max_lines":40,"utility_bot_nicks":["Jeeves"],"utility_min_lines":8,"utility_max_lines":15}' --actor aureate
 ```
 
+The normal `min_lines`/`max_lines` cadence controls occasional unaddressed
+channel participation; its counter and random threshold survive restarts.
 Ignored identities, private messages, and the Bottle's own messages do not count.
-All ambient replies still use normal listening windows and IRC safety limits.
+`utility_bot_nicks` identifies high-volume automated bots (such as RustJeeves)
+whose game announcements are not conversation. Configured utility-bot channel
+messages are excluded from normal ambient counting: unnamed events are ignored
+entirely, and events that name the Bottle use an independent persisted
+`utility_min_lines`–`utility_max_lines` cadence (default 8–15) to produce one
+rare reaction. All replies still use normal listening windows and IRC safety
+limits, and direct/private conversation from non-utility senders is unchanged.
 
 Give a Bottle a persistent two-axis mood with the optional moods module. Mood
 uses valence (depressed to ecstatic) and irritability (calm to angry), shifts

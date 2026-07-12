@@ -366,6 +366,24 @@ async def recent_messages(
     return [(row["speaker"], row["body"]) for row in reversed(rows)]
 
 
+async def recent_channel_message_records(
+    db: aiosqlite.Connection, *, bot_id: int, network: str, channel: str,
+    limit: int = 50,
+) -> list[tuple[str, str, str]]:
+    """Return a chronological, bounded room transcript for explicit admin use."""
+    cursor = await db.execute(
+        """SELECT timestamp, speaker, body FROM messages
+           WHERE bot_id = ? AND network = ? AND channel = ?
+           ORDER BY id DESC LIMIT ?""",
+        (bot_id, network, channel, limit),
+    )
+    rows = list(await cursor.fetchall())
+    return [
+        (str(row["timestamp"]), str(row["speaker"]), str(row["body"]))
+        for row in reversed(rows)
+    ]
+
+
 def exact_search_query(text: str) -> str | None:
     words: list[str] = []
     seen: set[str] = set()

@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 026.
+The schema below reflects migration 027.
 
 ## schema_migrations
 
@@ -96,6 +96,10 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 
 Stores persistent operational response control separately from Bottle enablement and process liveness. Columns: `bot_id INTEGER PRIMARY KEY`, `response_enabled INTEGER NOT NULL DEFAULT 1`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
 
+## bot_away_status
+
+Stores the current explicit operator-provided availability note for a Bottle. Columns: `bot_id INTEGER PRIMARY KEY`, `message TEXT NOT NULL`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. The note is injected into prompts before generation and changes are recorded in `configuration_events`.
+
 ## admin_events
 
 Stores inspectable outbound administration events. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `event_type TEXT NOT NULL`, `message TEXT NOT NULL`, `source_message_id INTEGER`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `delivered_at TEXT`. Foreign keys reference `bots(id)` with cascading deletion and `messages(id)` with `ON DELETE SET NULL`. Unique constraint: `(bot_id, event_type, source_message_id)`. Index: `admin_events_delivery_idx(bot_id, delivered_at, id)`.
@@ -156,3 +160,4 @@ Stores the optional moods module's global per-Bottle state. Columns: `bot_id INT
 - 024: Add the per-Bottle IANA time zone used for local date and time prompt context.
 - 025: Add persistent two-axis mood state, interaction heat, and inspectable last-change metadata.
 - 026: Add per-profile IRC quit message for graceful shutdown.
+- 027: Add persistent, audited per-Bottle away status for the Discord admin bridge.

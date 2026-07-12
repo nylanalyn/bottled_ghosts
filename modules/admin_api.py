@@ -1,17 +1,25 @@
 import hmac
 import ipaddress
+import logging
 from typing import Any
 
 from aiohttp import web
 
 from cellar.admin_store import (
     admin_api_token,
+    away_status,
     consume_admin_events,
     response_enabled,
+    set_away_status,
     set_response_enabled,
 )
+from cellar.irc import mentions_any_nick
+from cellar.llm import complete
 from cellar.module_api import ModuleContext, NightlyContext, RuntimeContext
+from cellar.storage import recent_channel_message_records
 from modules.moods import mood_status_line
+
+logger = logging.getLogger(__name__)
 
 
 def _active_module_names(
@@ -98,14 +106,29 @@ class Module:
             return web.json_response({"error": "invalid json"}, status=400)
         if not isinstance(payload, dict):
             return web.json_response({"error": "invalid json"}, status=400)
-        command = str(payload.get("command", "")).strip().lower()
-        if not command:
+        command_text = str(payload.get("command", "")).strip()
+        args = str(payload.get("args", "")).strip()
+        if args:
+            command_text = f"{command_text} {args}".strip()
+        if not command_text:
             return web.json_response({"error": "command is required"}, status=400)
+        command, _, argument = command_text.partition(" ")
+        command = command.lower()
+        argument = argument.strip()
+        if command in {"summarize", "summary"}:
+            async with ctx.database_lock:
+                summary_data = await self._summary_data(ctx, argument)
+            if isinstance(summary_data, list):
+                return web.json_response({"messages": summary_data})
+            channel, lines = summary_data
+            return web.json_response({"messages": await self._summarize(ctx, channel, lines)})
         async with ctx.database_lock:
             if command == "help":
                 messages = [
                     "help - this message\nstatus - Bottle status, active modules, and mood when the moods module is active\nmodel - current LLM model\n"
-                    "off - stop public model responses\non - resume public model responses"
+                    "off - stop public model responses\non - resume public model responses\n"
+                    "away <message> - set an availability note\nback - clear the availability note\n"
+                    "summarize [#channel] - summarize the last 50 room lines and report watched-nick pings"
                 ]
             elif command == "status":
                 enabled = await response_enabled(ctx.db, bottle_id=ctx.bottle.id)
@@ -126,6 +149,8 @@ class Module:
                 mood_block = await mood_status_line(ctx.db, ctx.bottle.id)
                 if mood_block is not None:
                     messages.append(mood_block)
+                away = await away_status(ctx.db, bottle_id=ctx.bottle.id)
+                messages.append(f"away: {away or 'no'}")
             elif command == "model":
                 messages = [f"model: {ctx.bottle.llm.model}"]
             elif command in {"off", "on"}:
@@ -138,9 +163,80 @@ class Module:
                     f"{ctx.bottle.name} is "
                     + ("back online." if enabled else "now silent; emergency monitoring remains active.")
                 ]
+            elif command == "away":
+                if not argument:
+                    away = await away_status(ctx.db, bottle_id=ctx.bottle.id)
+                    messages = [f"away: {away or 'no'}"]
+                elif argument.lower() in {"off", "clear", "back"}:
+                    await set_away_status(ctx.db, bottle_id=ctx.bottle.id, message=None)
+                    messages = [f"{ctx.bottle.name} is back."]
+                else:
+                    await set_away_status(
+                        ctx.db, bottle_id=ctx.bottle.id, message=argument,
+                    )
+                    messages = [f"away status set: {argument}"]
+            elif command == "back":
+                await set_away_status(ctx.db, bottle_id=ctx.bottle.id, message=None)
+                messages = [f"{ctx.bottle.name} is back."]
             else:
                 messages = [f"unknown command: {command}"]
         return web.json_response({"messages": messages})
+
+    async def _summary_data(
+        self, ctx: RuntimeContext, requested_channel: str,
+    ) -> tuple[str, list[tuple[str, str, str]]] | list[str]:
+        configured_channels = ctx.bottle.irc.channels
+        channel = requested_channel or str(
+            ctx.module_settings.get("admin_api", {}).get("summary_channel", "")
+        ).strip()
+        if not channel:
+            channel = configured_channels[0] if configured_channels else ""
+        if channel not in configured_channels:
+            return ["summary channel must be one of this Bottle's configured IRC channels"]
+        lines = await recent_channel_message_records(
+            ctx.db, bot_id=ctx.bottle.id, network=ctx.bottle.irc.network,
+            channel=channel, limit=50,
+        )
+        if not lines:
+            return [f"No recorded messages in {channel} yet."]
+        return channel, lines
+
+    async def _summarize(
+        self, ctx: RuntimeContext, channel: str, lines: list[tuple[str, str, str]],
+    ) -> list[str]:
+        transcript = "\n".join(
+            f"<{speaker}> {body[:450]}" for _timestamp, speaker, body in lines
+        )
+        try:
+            summary = await complete(ctx.bottle.llm, [
+                {"role": "system", "content": (
+                    "Give a short factual Discord admin summary of this IRC room. "
+                    "State the main topics, decisions, and unresolved questions. "
+                    "Do not roleplay, invent details, or address the channel."
+                )},
+                {"role": "user", "content": f"Room {channel}, last {len(lines)} lines:\n{transcript}"},
+            ])
+        except Exception:
+            logger.exception("admin summary failed for Bottle %d", ctx.bottle.id)
+            return ["Unable to summarize the room right now."]
+        messages = [f"{channel} summary:\n{summary.strip()[:1800]}"]
+        watched = self._watched_nicks(ctx.module_settings)
+        pings = [
+            f"{channel} <{speaker}> {body}"
+            for _timestamp, speaker, body in lines
+            if mentions_any_nick(body, watched)
+        ]
+        if pings:
+            messages.append("Watched-nick pings (verbatim):")
+            messages.extend(pings)
+        return messages
+
+    @staticmethod
+    def _watched_nicks(settings: dict[str, dict[str, object]]) -> tuple[str, ...]:
+        raw = settings.get("admin_api", {}).get("watch_nicks", [])
+        if not isinstance(raw, list):
+            return ()
+        return tuple(item.strip() for item in raw if isinstance(item, str) and item.strip())
 
     async def _events(self, ctx: RuntimeContext, request: web.Request) -> web.Response:
         raw_since = request.query.get("since", "0")

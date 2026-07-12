@@ -1,9 +1,18 @@
 import asyncio
 import socket
+from unittest.mock import AsyncMock
 
 from aiohttp import ClientSession
 
-from cellar.admin_store import consume_admin_events, enqueue_admin_event, response_enabled, set_admin_api_token, set_response_enabled
+from cellar.admin_store import (
+    away_status,
+    consume_admin_events,
+    enqueue_admin_event,
+    response_enabled,
+    set_admin_api_token,
+    set_away_status,
+    set_response_enabled,
+)
 from cellar.models import IncomingIRCMessage, IRCProfile, LLMProfile
 from cellar.module_api import ModuleContext, RuntimeContext, RuntimeState
 from cellar.module_store import set_module_enabled
@@ -68,6 +77,62 @@ async def test_response_control_and_event_delivery_are_persistent(tmp_path) -> N
         assert audit is not None
         assert "never-audited" not in str(audit["new_value"])
         assert audit["new_value"] is None
+    finally:
+        await db.close()
+
+
+async def test_away_status_is_persistent_and_audited(tmp_path) -> None:
+    db = await open_database(tmp_path / "away.db")
+    try:
+        bottle = await _bottle(db, tmp_path)
+        assert await set_away_status(
+            db, bottle_id=bottle.id, message="sleeping", actor="test",
+        )
+        assert await away_status(db, bottle_id=bottle.id) == "sleeping"
+        assert await set_away_status(db, bottle_id=bottle.id, message=None, actor="test")
+        assert await away_status(db, bottle_id=bottle.id) is None
+        rows = await (await db.execute(
+            """SELECT old_value, new_value FROM configuration_events
+               WHERE changed_fields = 'away_status' ORDER BY id"""
+        )).fetchall()
+        assert [(row["old_value"], row["new_value"]) for row in rows] == [
+            ("null", '"sleeping"'),
+            ('"sleeping"', "null"),
+        ]
+    finally:
+        await db.close()
+
+
+async def test_summary_uses_last_room_lines_and_returns_watched_pings(
+    tmp_path, monkeypatch,
+) -> None:
+    db = await open_database(tmp_path / "summary.db")
+    try:
+        bottle = await _bottle(db, tmp_path)
+        await log_message(
+            db, IRCMessage(network="test", channel="#test", speaker="alice",
+                           body="aureate, deployment is ready", bot_id=bottle.id),
+        )
+        await log_message(
+            db, IRCMessage(network="test", channel="#test", speaker="bob",
+                           body="we should deploy after lunch", bot_id=bottle.id),
+        )
+        state = RuntimeState()
+        context = RuntimeContext(
+            db=db, bottle=bottle, database_lock=state.database_lock, state=state,
+            module_settings={"admin_api": {"watch_nicks": ["aureate"]}},
+        )
+        module = AdminAPIModule()
+        monkeypatch.setattr(
+            "modules.admin_api.complete", AsyncMock(return_value="Deployment is the main topic."),
+        )
+        data = await module._summary_data(context, "")
+        assert not isinstance(data, list)
+        channel, lines = data
+        messages = await module._summarize(context, channel, lines)
+        assert messages[0] == "#test summary:\nDeployment is the main topic."
+        assert messages[1] == "Watched-nick pings (verbatim):"
+        assert messages[2] == "#test <alice> aureate, deployment is ready"
     finally:
         await db.close()
 

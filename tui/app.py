@@ -34,7 +34,9 @@ from cellar.memory_store import (
     list_memory_candidates,
     reject_memory_candidate,
 )
+from cellar.alias_store import ALIAS_PATTERN, add_alias, delete_alias, list_aliases
 from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
+from cellar.irc import irc_casefold
 from cellar.config_store import BottleSettings, load_bottle_settings, save_bottle_settings
 from cellar.module_loader import available_modules
 from cellar.module_store import (
@@ -188,6 +190,7 @@ class BottledGhostsApp(App[None]):
                         ("IRC server host", "config-host", "text"),
                         ("IRC server port", "config-port", "integer"),
                         ("IRC nickname", "config-nick", "text"),
+                        ("Address aliases (comma-separated)", "config-aliases", "text"),
                         ("IRC username", "config-username", "text"),
                         ("IRC real name", "config-realname", "text"),
                         ("IRC user modes (e.g. +B)", "config-user-modes", "text"),
@@ -670,6 +673,9 @@ class BottledGhostsApp(App[None]):
             "config-host": settings.host,
             "config-port": str(settings.port),
             "config-nick": settings.nick,
+            "config-aliases": ",".join(await list_aliases(
+                self.db, bottle_id=self.selected_bottle_id,
+            )),
             "config-username": settings.username,
             "config-realname": settings.realname,
             "config-user-modes": settings.user_modes,
@@ -728,6 +734,7 @@ class BottledGhostsApp(App[None]):
             if bottle_id is None:
                 raise ValueError("No Bottle selected")
             settings = self.form_settings(bottle_id)
+            aliases = self.form_aliases(settings.nick)
             if not settings.soul_prompt_path.is_file():
                 raise ValueError(f"soul prompt does not exist: {settings.soul_prompt_path}")
             if self.creating_bottle:
@@ -754,10 +761,25 @@ class BottledGhostsApp(App[None]):
                 self.selected_bottle_id = created_id
                 self.creating_bottle = False
                 changed = True
+                for alias in aliases:
+                    await add_alias(self.db, bottle_id=created_id, alias=alias, actor=self.actor)
             else:
                 changed = await save_bottle_settings(
                     self.db, settings=settings, actor=self.actor,
                 )
+                current_aliases = await list_aliases(self.db, bottle_id=settings.id)
+                desired_keys = {irc_casefold(alias) for alias in aliases}
+                for alias in current_aliases:
+                    if irc_casefold(alias) not in desired_keys:
+                        changed = await delete_alias(
+                            self.db, bottle_id=settings.id, alias=alias, actor=self.actor,
+                        ) or changed
+                current_keys = {irc_casefold(alias) for alias in current_aliases}
+                for alias in aliases:
+                    if irc_casefold(alias) not in current_keys:
+                        changed = await add_alias(
+                            self.db, bottle_id=settings.id, alias=alias, actor=self.actor,
+                        ) or changed
         except ValueError as error:
             self.notify(str(error), severity="error")
             return
@@ -767,12 +789,30 @@ class BottledGhostsApp(App[None]):
         await self.refresh_configuration()
         await self.refresh_audit()
 
+    def form_aliases(self, nick: str) -> list[str]:
+        aliases = [
+            alias.strip() for alias in self.query_one("#config-aliases", Input).value.split(",")
+            if alias.strip()
+        ]
+        keys: set[str] = set()
+        for alias in aliases:
+            if not ALIAS_PATTERN.fullmatch(alias):
+                raise ValueError("aliases must use valid IRC nickname characters")
+            key = irc_casefold(alias)
+            if key == irc_casefold(nick):
+                raise ValueError("an alias cannot duplicate the IRC nickname")
+            if key in keys:
+                raise ValueError("aliases must be unique")
+            keys.add(key)
+        return aliases
+
     def action_new_configuration(self) -> None:
         self.creating_bottle = True
         defaults = {
             "config-name": "", "config-soul": "", "config-timezone": "UTC",
             "config-network": "",
             "config-host": "", "config-port": "6697", "config-nick": "",
+            "config-aliases": "",
             "config-username": "", "config-realname": "", "config-channels": "",
             "config-user-modes": "",
             "config-endpoint": "", "config-model": "", "config-temperature": "0.7",

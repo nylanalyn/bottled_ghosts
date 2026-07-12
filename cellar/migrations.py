@@ -518,6 +518,18 @@ async def migration_026(db: aiosqlite.Connection) -> None:
         "ALTER TABLE irc_profiles ADD COLUMN quit_message TEXT NOT NULL DEFAULT 'Restarting — back soon.'"
     )
 
+
+async def migration_027(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE bot_away_status (
+            bot_id INTEGER PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
+            message TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -533,6 +545,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_024,
     migration_025,
     migration_026,
+    migration_027,
 )
 
 

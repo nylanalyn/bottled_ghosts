@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 from pydantic import field_validator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from cellar.irc import irc_casefold
+
 
 class BottleSettings(BaseModel):
     id: int
@@ -83,6 +85,12 @@ async def save_bottle_settings(
     new_audit = {field: new_values[field] for field in changed}
     try:
         await db.execute("BEGIN IMMEDIATE")
+        duplicate_alias = await (await db.execute(
+            "SELECT 1 FROM bot_aliases WHERE bot_id = ? AND alias_key = ?",
+            (settings.id, irc_casefold(settings.nick)),
+        )).fetchone()
+        if duplicate_alias is not None:
+            raise ValueError("IRC nickname duplicates an existing address alias")
         await db.execute(
             """UPDATE bots SET name = ?, soul_prompt_path = ?, max_lines = ?,
                    max_chars = ?, cooldown_seconds = ?, listen_window_seconds = ?,

@@ -91,7 +91,12 @@ bottled-ghosts module-toggle 1 admin_api on --actor aureate
 ```
 
 Point the router's bot entry at `http://127.0.0.1:9103` with the same token. The
-supported commands are `help`, `status`, `model`, `off`, and `on`. `status`
+supported commands are `help`, `status`, `model`, `off`, `on`, `away <message>`,
+`back`, and `summarize [#channel]`. `away` persists an operator-set availability
+note and injects it into the reply prompt; `back` clears it. `summarize` uses the
+last 50 logged room lines and also returns verbatim watched-nick pings. Configure
+the optional watched names in the module settings, for example
+`{"watch_nicks":["aureate"]}`. `status`
 shows IRC/model/response state, active modules, and mood when the moods module
 is active. `off` leaves IRC connected and persistently suppresses public model
 responses.

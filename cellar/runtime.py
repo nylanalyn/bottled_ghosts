@@ -8,7 +8,7 @@ import aiosqlite
 
 from cellar.irc import IRCAuthenticationError, IRCClient, irc_casefold, mentions_any_nick
 from cellar.local_time import local_datetime_context
-from cellar.admin_store import response_enabled
+from cellar.admin_store import away_status, response_enabled
 from cellar.identity import resolve_user_identity
 from cellar.ignore_store import matching_ignore_action
 from cellar.listening import ListeningWindowManager
@@ -87,6 +87,13 @@ async def run_bottle_once(
                 if latest.identity_confidence >= 0.8 else []
             )
             dreams = await recent_dream_texts(db, bot_id=bottle.id)
+            availability = await away_status(db, bottle_id=bottle.id)
+            if availability is not None:
+                module_context.prompt_sections.append(
+                    "Operator-set availability status: "
+                    f"{availability!r}. If asked where you are or whether you are available, "
+                    "answer consistently with this status without claiming more certainty."
+                )
             await modules.before_prompt(module_context)
         prompt = build_prompt(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,

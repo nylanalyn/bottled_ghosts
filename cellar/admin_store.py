@@ -58,6 +58,61 @@ async def response_enabled(db: aiosqlite.Connection, *, bottle_id: int) -> bool:
     return True if row is None else bool(row["response_enabled"])
 
 
+async def away_status(db: aiosqlite.Connection, *, bottle_id: int) -> str | None:
+    row = await (await db.execute(
+        "SELECT message FROM bot_away_status WHERE bot_id = ?", (bottle_id,),
+    )).fetchone()
+    return None if row is None else str(row["message"])
+
+
+async def set_away_status(
+    db: aiosqlite.Connection, *, bottle_id: int, message: str | None,
+    actor: str = "discord-admin",
+) -> bool:
+    """Persist an operator-provided availability note and its audit trail."""
+    actor = actor.strip()
+    if not actor:
+        raise ValueError("control actor cannot be empty")
+    if message is not None:
+        message = message.strip()
+        if not message:
+            message = None
+        elif "\r" in message or "\n" in message or len(message) > 500:
+            raise ValueError("away message must be one line of 500 characters or fewer")
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        exists = await (await db.execute(
+            "SELECT 1 FROM bots WHERE id = ?", (bottle_id,),
+        )).fetchone()
+        if exists is None:
+            raise LookupError(f"Bottle {bottle_id} does not exist")
+        current = await away_status(db, bottle_id=bottle_id)
+        if current == message:
+            await db.commit()
+            return False
+        if message is None:
+            await db.execute("DELETE FROM bot_away_status WHERE bot_id = ?", (bottle_id,))
+        else:
+            await db.execute(
+                """INSERT INTO bot_away_status(bot_id, message, updated_at)
+                   VALUES (?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(bot_id) DO UPDATE SET message = excluded.message,
+                       updated_at = CURRENT_TIMESTAMP""",
+                (bottle_id, message),
+            )
+        await db.execute(
+            """INSERT INTO configuration_events(
+                   bot_id, actor, changed_fields, old_value, new_value
+               ) VALUES (?, ?, 'away_status', ?, ?)""",
+            (bottle_id, actor, json.dumps(current), json.dumps(message)),
+        )
+        await db.commit()
+        return True
+    except Exception:
+        await db.rollback()
+        raise
+
+
 async def set_response_enabled(
     db: aiosqlite.Connection, *, bottle_id: int, enabled: bool,
     actor: str = "discord-admin",

@@ -9,6 +9,7 @@ import aiosqlite
 from cellar.irc import (
     IRCAuthenticationError,
     IRCClient,
+    IRCJoinEvent,
     IRCKickEvent,
     IRCKickedError,
     irc_casefold,
@@ -409,6 +410,28 @@ async def run_bottle_once(
                 ),
             )
 
+    async def on_join(event: IRCJoinEvent) -> None:
+        """Re-part if a bouncer or server autojoins an active break channel."""
+        async with database_lock:
+            rows = await _active_room_breaks(
+                db, bottle_id=bottle.id, network=bottle.irc.network,
+            )
+            if not any(irc_casefold(str(row["channel"])) == irc_casefold(event.channel)
+                       for row in rows):
+                return
+            await log_message(
+                db,
+                IRCMessage(
+                    network=bottle.irc.network, channel=event.channel,
+                    speaker="IRC runtime",
+                    body="System event: active mood break reasserted after an automatic JOIN.",
+                    bot_id=bottle.id,
+                ),
+            )
+        logger.warning("re-parting %s while Bottle %d has an active mood break",
+                       event.channel, bottle.id)
+        await client.part_channel(event.channel)
+
     client = IRCClient(bottle.irc, on_message)
     async with database_lock:
         active_breaks = await _active_room_breaks(
@@ -447,6 +470,7 @@ async def run_bottle_once(
         room_break_tasks.add(task)
         task.add_done_callback(room_break_tasks.discard)
     client.kick_handler = on_kick
+    client.join_handler = on_join
     if runtime_state is not None:
         client.connection_state_handler = lambda connected: setattr(
             runtime_state, "irc_connected", connected

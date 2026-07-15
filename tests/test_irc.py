@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from cellar.irc import (
     IRCClient,
     IRCKickEvent,
+    IRCJoinEvent,
     IRCKickedError,
     capability_names,
     irc_casefold,
@@ -517,3 +518,51 @@ async def test_kick_notifies_runtime_and_requests_delayed_reconnect(monkeypatch)
         await client.run()
 
     assert events == [IRCKickEvent("#test", "operator", "too rude")]
+
+
+@pytest.mark.asyncio
+async def test_self_join_notifies_runtime(monkeypatch) -> None:
+    class Reader:
+        def __init__(self) -> None:
+            self.lines = iter([
+                b":server 001 ghost :welcome\r\n",
+                b":ghost!ghost@example JOIN #test\r\n",
+                b"",
+            ])
+
+        async def readline(self) -> bytes:
+            return next(self.lines)
+
+    class Writer:
+        def write(self, _data: bytes) -> None:
+            return None
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    events: list[IRCJoinEvent] = []
+
+    async def open_connection(*_args, **_kwargs):
+        return Reader(), Writer()
+
+    async def handler(_message) -> None:
+        return None
+
+    async def join_handler(event: IRCJoinEvent) -> None:
+        events.append(event)
+
+    monkeypatch.setattr("cellar.irc.asyncio.open_connection", open_connection)
+    client = IRCClient(
+        IRCProfile(network="test", host="localhost", tls=False, nick="ghost",
+                   username="ghost", realname="Ghost", channels=["#test"]),
+        handler, join_handler=join_handler,
+    )
+    with pytest.raises(ConnectionError):
+        await client.run()
+    assert events == [IRCJoinEvent("#test")]

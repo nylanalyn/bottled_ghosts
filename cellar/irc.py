@@ -10,6 +10,7 @@ from cellar.models import IRCProfile, IncomingIRCMessage
 
 MessageHandler = Callable[[IncomingIRCMessage], Awaitable[None]]
 KickHandler = Callable[["IRCKickEvent"], Awaitable[None]]
+JoinHandler = Callable[["IRCJoinEvent"], Awaitable[None]]
 logger = logging.getLogger(__name__)
 IRC_PAYLOAD_BYTES = 510
 IRC_NICK_CHARACTERS = r"A-Za-z0-9\-\[\]\\`_^{|}~"
@@ -38,6 +39,13 @@ class IRCKickEvent:
     channel: str
     kicker: str
     reason: str
+
+
+@dataclass(frozen=True)
+class IRCJoinEvent:
+    """A server-confirmed channel JOIN by this client."""
+
+    channel: str
 
 
 class IRCKickedError(ConnectionError):
@@ -155,10 +163,12 @@ class IRCClient:
     def __init__(
         self, profile: IRCProfile, handler: MessageHandler,
         kick_handler: KickHandler | None = None,
+        join_handler: JoinHandler | None = None,
     ) -> None:
         self.profile = profile
         self.handler = handler
         self.kick_handler = kick_handler
+        self.join_handler = join_handler
         self.writer: asyncio.StreamWriter | None = None
         self.capabilities: set[str] = set()
         self.pending_capabilities: set[str] = set()
@@ -371,6 +381,13 @@ class IRCClient:
                         if self.kick_handler is not None:
                             await self.kick_handler(event)
                         raise IRCKickedError(event)
+                if command == "JOIN" and params:
+                    joined_nick = line[1:].split("!", 1)[0] if line.startswith(":") else ""
+                    if (
+                        self.join_handler is not None
+                        and irc_casefold(joined_nick) == irc_casefold(self.current_nick)
+                    ):
+                        await self.join_handler(IRCJoinEvent(channel=params[0]))
                 if line.startswith("ERROR "):
                     raise ConnectionError(line)
                 parsed = parse_privmsg(line)

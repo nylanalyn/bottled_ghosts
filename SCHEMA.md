@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 028.
+The schema below reflects migration 029.
 
 ## schema_migrations
 
@@ -132,6 +132,10 @@ Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY K
 
 Stores the optional moods module's global per-Bottle state. Columns: `bot_id INTEGER PRIMARY KEY`, `valence REAL NOT NULL` (CHECK from -1.0 depressed to 1.0 ecstatic), `irritability REAL NOT NULL` (CHECK from -1.0 calm to 1.0 angry), `interaction_heat REAL NOT NULL DEFAULT 0.0` (CHECK nonnegative), `last_interaction_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_event TEXT NOT NULL DEFAULT 'initial'` (`initial` or `interaction`), `last_valence_delta REAL NOT NULL DEFAULT 0.0`, `last_irritability_delta REAL NOT NULL DEFAULT 0.0`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Updates happen lazily on incoming messages: elapsed time decays heat, pulls both axes toward configured baselines, applies bounded quiet-time loss and random drift, then applies attention and overload effects. The last event and deltas expose the most recent mutation for inspection.
 
+## mood_room_breaks
+
+Stores runtime-enforced, temporary mood breaks per Bottle and IRC channel. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `started_at INTEGER NOT NULL`, `rejoin_at INTEGER NOT NULL`, `baseline_valence REAL NOT NULL`, `baseline_irritability REAL NOT NULL`, `active INTEGER NOT NULL DEFAULT 1`, `reset_at INTEGER`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `mood_room_breaks_due_idx(bot_id, network, active, rejoin_at)`. When the moods module reaches irritability `1.0`, the runtime records a 30-minute active break before issuing `PART`; it skips that channel on reconnect. At the due time it resets global mood to the recorded profile baselines with zero interaction heat, marks the break inactive, and sends `JOIN`.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -162,3 +166,4 @@ Stores the optional moods module's global per-Bottle state. Columns: `bot_id INT
 - 026: Add per-profile IRC quit message for graceful shutdown.
 - 027: Add persistent, audited per-Bottle away status for the Discord admin bridge.
 - 028: Add persisted, independently paced utility-bot event reactions to the optional ambient-chat module.
+- 029: Add persistent, runtime-enforced mood room breaks and scheduled baseline reset metadata.

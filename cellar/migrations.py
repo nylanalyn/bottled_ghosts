@@ -542,6 +542,28 @@ async def migration_028(db: aiosqlite.Connection) -> None:
         """
     )
 
+
+async def migration_029(db: aiosqlite.Connection) -> None:
+    await db.executescript(
+        """
+        CREATE TABLE mood_room_breaks (
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            rejoin_at INTEGER NOT NULL,
+            baseline_valence REAL NOT NULL CHECK (baseline_valence BETWEEN -1.0 AND 1.0),
+            baseline_irritability REAL NOT NULL CHECK (baseline_irritability BETWEEN -1.0 AND 1.0),
+            active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+            reset_at INTEGER,
+            PRIMARY KEY (bot_id, network, channel),
+            CHECK (rejoin_at > started_at)
+        );
+        CREATE INDEX mood_room_breaks_due_idx
+            ON mood_room_breaks(bot_id, network, active, rejoin_at);
+        """
+    )
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -559,6 +581,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_026,
     migration_027,
     migration_028,
+    migration_029,
 )
 
 

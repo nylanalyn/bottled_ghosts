@@ -6,7 +6,14 @@ from pathlib import Path
 
 import aiosqlite
 
-from cellar.irc import IRCAuthenticationError, IRCClient, irc_casefold, mentions_any_nick
+from cellar.irc import (
+    IRCAuthenticationError,
+    IRCClient,
+    IRCKickEvent,
+    IRCKickedError,
+    irc_casefold,
+    mentions_any_nick,
+)
 from cellar.local_time import local_datetime_context
 from cellar.admin_store import away_status, response_enabled
 from cellar.identity import resolve_user_identity
@@ -18,7 +25,7 @@ from cellar.memory_store import approved_memory_texts, store_memory_candidates
 from cellar.dream_store import recent_dream_texts
 from cellar.models import Bottle, IRCMessage, IncomingIRCMessage
 from cellar.module_api import (
-    ModuleCommand,
+    ModuleCommand, RoomBreakRequest,
     ModuleContext,
     ModuleRunner,
     RuntimeContext,
@@ -30,6 +37,97 @@ from cellar.safety import Cooldown, sanitize
 from cellar.storage import log_message, open_database, recent_messages, search_messages
 
 logger = logging.getLogger(__name__)
+MOOD_BREAK_SECONDS = 30 * 60
+MOOD_BREAK_FALLBACK = "I'm too annoyed to be good company. I need thirty minutes to breathe."
+
+
+async def _active_room_breaks(
+    db: aiosqlite.Connection, *, bottle_id: int, network: str,
+) -> list[aiosqlite.Row]:
+    cursor = await db.execute(
+        """SELECT channel, rejoin_at, baseline_valence, baseline_irritability
+           FROM mood_room_breaks
+           WHERE bot_id = ? AND network = ? AND active = 1
+           ORDER BY rejoin_at""",
+        (bottle_id, network),
+    )
+    return list(await cursor.fetchall())
+
+
+async def _start_room_break(
+    db: aiosqlite.Connection, *, bottle: Bottle, request: RoomBreakRequest,
+) -> bool:
+    """Persist a break before issuing PART; an active break is never extended."""
+    if request.duration_seconds != MOOD_BREAK_SECONDS:
+        raise ValueError("room breaks must last exactly 30 minutes")
+    now = int(time.time())
+    cursor = await db.execute(
+        """INSERT INTO mood_room_breaks(
+               bot_id, network, channel, started_at, rejoin_at,
+               baseline_valence, baseline_irritability, active, reset_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL)
+           ON CONFLICT(bot_id, network, channel) DO UPDATE SET
+               started_at = excluded.started_at,
+               rejoin_at = excluded.rejoin_at,
+               baseline_valence = excluded.baseline_valence,
+               baseline_irritability = excluded.baseline_irritability,
+               active = 1,
+               reset_at = NULL
+           WHERE mood_room_breaks.active = 0""",
+        (bottle.id, bottle.irc.network, request.channel, now,
+         now + request.duration_seconds, request.baseline_valence,
+         request.baseline_irritability),
+    )
+    await db.commit()
+    return cursor.rowcount == 1
+
+
+async def _finish_room_break(
+    db: aiosqlite.Connection, *, bottle: Bottle, channel: str,
+) -> bool:
+    """Mark a due break complete and restore the recorded mood defaults."""
+    now = int(time.time())
+    row = await (await db.execute(
+        """SELECT baseline_valence, baseline_irritability
+           FROM mood_room_breaks
+           WHERE bot_id = ? AND network = ? AND channel = ?
+             AND active = 1 AND rejoin_at <= ?""",
+        (bottle.id, bottle.irc.network, channel, now),
+    )).fetchone()
+    if row is None:
+        return False
+    previous = await (await db.execute(
+        "SELECT valence, irritability FROM mood_state WHERE bot_id = ?", (bottle.id,)
+    )).fetchone()
+    valence, irritability = float(row[0]), float(row[1])
+    previous_valence = float(previous[0]) if previous is not None else valence
+    previous_irritability = float(previous[1]) if previous is not None else irritability
+    await db.execute(
+        """INSERT INTO mood_state(
+               bot_id, valence, irritability, interaction_heat,
+               last_interaction_at, updated_at, last_event,
+               last_valence_delta, last_irritability_delta
+           ) VALUES (?, ?, ?, 0.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                     'initial', ?, ?)
+           ON CONFLICT(bot_id) DO UPDATE SET
+               valence = excluded.valence,
+               irritability = excluded.irritability,
+               interaction_heat = excluded.interaction_heat,
+               last_interaction_at = excluded.last_interaction_at,
+               updated_at = excluded.updated_at,
+               last_event = excluded.last_event,
+               last_valence_delta = excluded.last_valence_delta,
+               last_irritability_delta = excluded.last_irritability_delta""",
+        (bottle.id, valence, irritability, valence - previous_valence,
+         irritability - previous_irritability),
+    )
+    await db.execute(
+        """UPDATE mood_room_breaks SET active = 0, reset_at = ?
+           WHERE bot_id = ? AND network = ? AND channel = ? AND active = 1""",
+        (now, bottle.id, bottle.irc.network, channel),
+    )
+    await db.commit()
+    return True
 
 
 @dataclass(frozen=True)
@@ -52,17 +150,24 @@ async def run_bottle_once(
     modules = modules or await load_modules(db, bottle_id=bottle.id)
     database_lock = runtime_state.database_lock if runtime_state is not None else asyncio.Lock()
     client: IRCClient
+    room_break_tasks: set[asyncio.Task[None]] = set()
+    stepping_away_channels: set[str] = set()
 
     def active_nick() -> str:
         return getattr(client, "current_nick", bottle.irc.nick)
 
-    async def respond(items: tuple[WindowMessage, ...]) -> None:
+    async def respond(
+        items: tuple[WindowMessage, ...], *, departure_request: RoomBreakRequest | None = None,
+    ) -> None:
         latest = items[-1]
         message = latest.message
         user_id = latest.user_id
         message_ids = [item.message_id for item in items]
         body = "\n".join(item.message.body for item in items)
         speaker, channel = message.nick, latest.conversation
+        if departure_request is None and irc_casefold(channel) in stepping_away_channels:
+            logger.info("not responding in %s while Bottle is on a mood break", channel)
+            return
         direct_message = irc_casefold(message.target) == irc_casefold(active_nick())
         reply_target = speaker if direct_message else message.target
         module_context = ModuleContext(
@@ -98,6 +203,13 @@ async def run_bottle_once(
                     "answer consistently with this status without claiming more certainty."
                 )
             await modules.before_prompt(module_context)
+            if departure_request is not None:
+                module_context.prompt_sections.append(
+                    "You have reached your limit with this room and are now leaving it. "
+                    "Give exactly one short, in-character farewell that says you are annoyed "
+                    "and need to step away for about thirty minutes. Do not name or insult anyone, "
+                    "debate the decision, ask a question, or explain the mood system."
+                )
         prompt = build_prompt(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,
             dreams=dreams, relevant=relevant, history=history, speaker=speaker, body=body,
@@ -110,11 +222,19 @@ async def run_bottle_once(
             await modules.after_response(module_context)
             replies_enabled = await response_enabled(db, bottle_id=bottle.id)
         lines = sanitize(
-            module_context.response or "", max_lines=bottle.max_lines,
+            module_context.response or "",
+            max_lines=1 if departure_request is not None else bottle.max_lines,
             max_chars=bottle.max_chars, bot_nick=active_nick(),
         )
         if not replies_enabled:
             lines = []
+        elif departure_request is not None and not lines:
+            # A break should not silently look like a disconnect merely because
+            # an LLM response was empty or malformed.
+            lines = sanitize(
+                MOOD_BREAK_FALLBACK, max_lines=1, max_chars=bottle.max_chars,
+                bot_nick=active_nick(),
+            )
         if not lines:
             logger.warning("LLM response was empty after sanitization")
         for line in lines:
@@ -175,6 +295,7 @@ async def run_bottle_once(
                 )
 
     async def on_message(message: IncomingIRCMessage) -> None:
+        should_part = False
         async with database_lock:
             ignore_action = await matching_ignore_action(
                 db, bottle_id=bottle.id, network=bottle.irc.network, identity=message,
@@ -207,6 +328,43 @@ async def run_bottle_once(
             await modules.on_message(module_context)
             commands = list(module_context.commands)
             replies_enabled = await response_enabled(db, bottle_id=bottle.id)
+            request = module_context.room_break
+            configured_channels = {irc_casefold(item) for item in bottle.irc.channels}
+            if request is not None and irc_casefold(request.channel) in configured_channels:
+                should_part = await _start_room_break(db, bottle=bottle, request=request)
+                if should_part:
+                    stepping_away_channels.add(irc_casefold(request.channel))
+                    await log_message(
+                        db, IRCMessage(
+                            network=bottle.irc.network, channel=request.channel,
+                            speaker="IRC runtime",
+                            body=("System event: mood irritability reached +1.00; "
+                                  "taking a 30-minute room break."),
+                            bot_id=bottle.id,
+                        ),
+                    )
+        if should_part:
+            assert request is not None
+            break_item = WindowMessage(
+                message=message, user_id=user_id, message_id=message_id,
+                conversation=conversation, addressed=True,
+                response_reason=module_context.response_reason,
+                identity_confidence=resolved.confidence,
+            )
+            try:
+                await respond((break_item,), departure_request=request)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("failed to announce mood break in %s", request.channel)
+            await client.part_channel(message.target)
+            task = asyncio.create_task(
+                return_from_break(request.channel, int(time.time()) + request.duration_seconds),
+                name=f"mood-break-{bottle.id}-{request.channel}",
+            )
+            room_break_tasks.add(task)
+            task.add_done_callback(room_break_tasks.discard)
+            return
         if commands:
             await send_module_commands(
                 commands, target=message.target, channel=conversation,
@@ -234,7 +392,61 @@ async def run_bottle_once(
                 )
             )
 
+    async def on_kick(event: IRCKickEvent) -> None:
+        """Persist the event so the Bottle sees it in later channel context."""
+        async with database_lock:
+            await log_message(
+                db,
+                IRCMessage(
+                    network=bottle.irc.network,
+                    channel=event.channel,
+                    speaker="IRC server",
+                    body=(
+                        f"System event: {active_nick()} was kicked by {event.kicker}. "
+                        f"Reason: {event.reason}"
+                    ),
+                    bot_id=bottle.id,
+                ),
+            )
+
     client = IRCClient(bottle.irc, on_message)
+    async with database_lock:
+        active_breaks = await _active_room_breaks(
+            db, bottle_id=bottle.id, network=bottle.irc.network,
+        )
+        # A restart may discover a break whose return time elapsed while the
+        # process was down. Complete it before IRC registration so the normal
+        # post-registration JOIN includes that channel.
+        for row in active_breaks:
+            if int(row["rejoin_at"]) <= int(time.time()):
+                await _finish_room_break(db, bottle=bottle, channel=str(row["channel"]))
+        active_breaks = await _active_room_breaks(
+            db, bottle_id=bottle.id, network=bottle.irc.network,
+        )
+    stepping_away_channels.update(irc_casefold(str(row["channel"])) for row in active_breaks)
+    client.join_channels = [
+        channel for channel in bottle.irc.channels
+        if irc_casefold(channel) not in stepping_away_channels
+    ]
+
+    async def return_from_break(channel: str, rejoin_at: int) -> None:
+        await asyncio.sleep(max(0.0, rejoin_at - time.time()))
+        async with database_lock:
+            finished = await _finish_room_break(db, bottle=bottle, channel=channel)
+        if finished:
+            stepping_away_channels.discard(irc_casefold(channel))
+            await client.join_channel(channel)
+            logger.info("Bottle %d (%s) rejoined %s after a mood break",
+                        bottle.id, bottle.name, channel)
+
+    for row in active_breaks:
+        task = asyncio.create_task(
+            return_from_break(str(row["channel"]), int(row["rejoin_at"])),
+            name=f"mood-break-{bottle.id}-{row['channel']}",
+        )
+        room_break_tasks.add(task)
+        task.add_done_callback(room_break_tasks.discard)
+    client.kick_handler = on_kick
     if runtime_state is not None:
         client.connection_state_handler = lambda connected: setattr(
             runtime_state, "irc_connected", connected
@@ -243,6 +455,10 @@ async def run_bottle_once(
         await client.run()
     finally:
         await windows.close()
+        for task in tuple(room_break_tasks):
+            task.cancel()
+        if room_break_tasks:
+            await asyncio.gather(*room_break_tasks, return_exceptions=True)
 
 
 async def run_bottle(db: aiosqlite.Connection, bottle: Bottle) -> None:
@@ -268,6 +484,14 @@ async def run_bottle(db: aiosqlite.Connection, bottle: Bottle) -> None:
                     bottle.id, bottle.name,
                 )
                 raise
+            except IRCKickedError as error:
+                runtime_state.irc_connected = False
+                delay = 1.0
+                logger.warning(
+                    "Bottle %d (%s) was kicked from %s; reconnecting in 60s",
+                    bottle.id, bottle.name, error.event.channel,
+                )
+                await asyncio.sleep(60.0)
             except Exception:
                 runtime_state.irc_connected = False
                 if time.monotonic() - started_at >= 30.0:

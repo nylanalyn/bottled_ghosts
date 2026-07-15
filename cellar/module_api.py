@@ -17,6 +17,16 @@ class ModuleCommand:
     body: str
 
 
+@dataclass(frozen=True)
+class RoomBreakRequest:
+    """A request for the runtime to temporarily part one configured channel."""
+
+    channel: str
+    duration_seconds: int
+    baseline_valence: float
+    baseline_irritability: float
+
+
 @dataclass
 class ModuleContext:
     db: aiosqlite.Connection
@@ -34,6 +44,7 @@ class ModuleContext:
     module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
     prompt_sections: list[str] = field(default_factory=list)
     commands: list[ModuleCommand] = field(default_factory=list)
+    room_break: RoomBreakRequest | None = None
     response: str | None = None
 
 

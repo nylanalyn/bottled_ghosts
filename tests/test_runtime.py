@@ -14,7 +14,7 @@ from cellar.models import (
 from cellar.module_store import set_module_enabled, set_module_settings
 from cellar.module_api import ModuleRunner
 from cellar.runtime import run_bottle, run_bottle_once, run_bottles
-from cellar.irc import IRCAuthenticationError
+from cellar.irc import IRCAuthenticationError, IRCKickEvent, IRCKickedError
 from cellar.storage import create_bottle, load_bottle, open_database
 
 
@@ -50,6 +50,76 @@ async def test_bottle_reconnects_with_backoff(monkeypatch, tmp_path) -> None:
     with pytest.raises(asyncio.CancelledError):
         await run_bottle(object(), bottle)  # type: ignore[arg-type]
     assert delays == [1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_bottle_waits_a_minute_after_a_kick(monkeypatch, tmp_path) -> None:
+    bottle = Bottle(
+        id=1, name="test", soul_prompt_path=tmp_path / "soul.md",
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost", channels=["#test"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+    )
+    attempts = 0
+    delays: list[float] = []
+
+    async def fake_run_once(*_args) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise IRCKickedError(IRCKickEvent("#test", "operator", "too rude"))
+        raise asyncio.CancelledError
+
+    async def fake_load_modules(_db, *, bottle_id: int) -> ModuleRunner:
+        return ModuleRunner([])
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("cellar.runtime.run_bottle_once", fake_run_once)
+    monkeypatch.setattr("cellar.runtime.load_modules", fake_load_modules)
+    monkeypatch.setattr("cellar.runtime.asyncio.sleep", fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_bottle(object(), bottle)  # type: ignore[arg-type]
+    assert delays == [60.0]
+
+
+@pytest.mark.asyncio
+async def test_kick_is_logged_for_the_bottles_next_prompt(monkeypatch, tmp_path) -> None:
+    database = tmp_path / "kick.db"
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(database)
+    bottle_id = await create_bottle(
+        db, name="test", soul_prompt_path=soul,
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost", channels=["#test"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+    )
+    bottle = await load_bottle(db, bottle_id)
+
+    class FakeIRCClient:
+        def __init__(self, _profile, _handler) -> None:
+            self.kick_handler = None
+
+        async def run(self) -> None:
+            assert self.kick_handler is not None
+            await self.kick_handler(IRCKickEvent("#test", "operator", "too rude"))
+            raise IRCKickedError(IRCKickEvent("#test", "operator", "too rude"))
+
+    monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+    try:
+        with pytest.raises(IRCKickedError):
+            await run_bottle_once(db, bottle)
+        row = await (
+            await db.execute("SELECT speaker, body FROM messages WHERE bot_id = ?", (bottle_id,))
+        ).fetchone()
+        assert row is not None
+        assert row["speaker"] == "IRC server"
+        assert row["body"] == "System event: ghost was kicked by operator. Reason: too rude"
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import aiosqlite
 
-from cellar.module_api import ModuleContext, NightlyContext
+from cellar.module_api import ModuleContext, NightlyContext, RoomBreakRequest
 
 _MAX_ELAPSED_HOURS = 168.0
 
@@ -299,7 +299,22 @@ class Module:
         if ctx.response_reason == "ambient" and random.random() >= settings.ambient_sample_rate:
             return
         intensity = settings.ambient_sample_rate if ctx.response_reason == "ambient" else 1.0
-        await _update(ctx, settings, intensity=intensity)
+        mood = await _update(ctx, settings, intensity=intensity)
+        # The runtime owns IRC membership and persists the actual break.  This
+        # module only makes the explicit request after its inspectable state
+        # reaches the hard ceiling.
+        if (
+            mood.irritability >= 1.0
+            and ctx.conversation is not None
+            and ctx.message.target.startswith(("#", "&"))
+        ):
+            ctx.room_break = RoomBreakRequest(
+                channel=ctx.message.target,
+                duration_seconds=30 * 60,
+                baseline_valence=settings.baseline_valence,
+                baseline_irritability=settings.baseline_irritability,
+            )
+            ctx.suppress_automatic_response = True
 
     async def before_prompt(self, ctx: ModuleContext) -> None:
         ctx.prompt_sections.append(_format_note(await _current(ctx, _settings(ctx))))

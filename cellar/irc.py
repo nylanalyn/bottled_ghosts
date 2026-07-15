@@ -4,10 +4,12 @@ import logging
 import re
 import ssl
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from cellar.models import IRCProfile, IncomingIRCMessage
 
 MessageHandler = Callable[[IncomingIRCMessage], Awaitable[None]]
+KickHandler = Callable[["IRCKickEvent"], Awaitable[None]]
 logger = logging.getLogger(__name__)
 IRC_PAYLOAD_BYTES = 510
 IRC_NICK_CHARACTERS = r"A-Za-z0-9\-\[\]\\`_^{|}~"
@@ -27,6 +29,23 @@ class IRCAuthenticationError(RuntimeError):
 
 class IRCNickCollisionError(ConnectionError):
     """All configured nick choices are currently in use."""
+
+
+@dataclass(frozen=True)
+class IRCKickEvent:
+    """A server-confirmed removal of this client from an IRC channel."""
+
+    channel: str
+    kicker: str
+    reason: str
+
+
+class IRCKickedError(ConnectionError):
+    """Reconnect after a deliberate delay following a channel KICK."""
+
+    def __init__(self, event: IRCKickEvent) -> None:
+        self.event = event
+        super().__init__(f"kicked from {event.channel} by {event.kicker}: {event.reason}")
 
 
 def irc_casefold(value: str) -> str:
@@ -133,9 +152,13 @@ def sasl_plain_chunks(username: str, password: str) -> list[str]:
 
 
 class IRCClient:
-    def __init__(self, profile: IRCProfile, handler: MessageHandler) -> None:
+    def __init__(
+        self, profile: IRCProfile, handler: MessageHandler,
+        kick_handler: KickHandler | None = None,
+    ) -> None:
         self.profile = profile
         self.handler = handler
+        self.kick_handler = kick_handler
         self.writer: asyncio.StreamWriter | None = None
         self.capabilities: set[str] = set()
         self.pending_capabilities: set[str] = set()
@@ -143,6 +166,7 @@ class IRCClient:
         self.current_nick = profile.nick
         self._nick_choices = [profile.nick, *profile.alternate_nicks]
         self._nick_index = 0
+        self.join_channels = list(profile.channels)
         self.connection_state_handler: Callable[[bool], None] | None = None
 
     async def send_raw(self, line: str) -> None:
@@ -160,6 +184,15 @@ class IRCClient:
         if available < 1:
             raise ValueError("IRC message target leaves no room for a body")
         await self.send_raw(f"{prefix}{truncate_utf8(body, available)}")
+
+    async def part_channel(self, channel: str, reason: str = "Taking thirty minutes to breathe.") -> None:
+        """Leave one channel with a bounded, single-line IRC PART reason."""
+        prefix = f"PART {channel} :"
+        available = IRC_PAYLOAD_BYTES - len(prefix.encode("utf-8"))
+        await self.send_raw(f"{prefix}{truncate_utf8(single_line_irc_text(reason), available)}")
+
+    async def join_channel(self, channel: str) -> None:
+        await self.send_raw(f"JOIN {channel}")
 
     async def quit(self, message: str | None = None) -> None:
         """Send a graceful IRC QUIT before closing the connection.
@@ -302,6 +335,10 @@ class IRCClient:
                     logger.warning("IRC nick in use; trying %s", self.current_nick)
                     await self.send_raw(f"NICK {self.current_nick}")
                     continue
+                if numeric == "474":
+                    channel = params[1] if len(params) > 1 else "an IRC channel"
+                    logger.warning("banned from %s; leaving this connection up", channel)
+                    continue
                 if numeric == "001":
                     registered = True
                     if params:
@@ -317,10 +354,23 @@ class IRCClient:
                             "setting user modes %s on %s",
                             self.profile.user_modes, self.current_nick,
                         )
-                    for channel in self.profile.channels:
+                    for channel in self.join_channels:
                         await self.send_raw(f"JOIN {channel}")
                         logger.info("joining %s", channel)
                     continue
+                if command == "KICK" and len(params) >= 2:
+                    channel, kicked_nick = params[:2]
+                    if irc_casefold(kicked_nick) == irc_casefold(self.current_nick):
+                        kicker = line[1:].split("!", 1)[0] if line.startswith(":") else "server"
+                        event = IRCKickEvent(
+                            channel=channel,
+                            kicker=kicker,
+                            reason=params[2] if len(params) > 2 else "No reason given",
+                        )
+                        logger.warning("kicked from %s by %s", event.channel, event.kicker)
+                        if self.kick_handler is not None:
+                            await self.kick_handler(event)
+                        raise IRCKickedError(event)
                 if line.startswith("ERROR "):
                     raise ConnectionError(line)
                 parsed = parse_privmsg(line)

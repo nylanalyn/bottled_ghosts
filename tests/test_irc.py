@@ -5,6 +5,8 @@ from pydantic import ValidationError
 
 from cellar.irc import (
     IRCClient,
+    IRCKickEvent,
+    IRCKickedError,
     capability_names,
     irc_casefold,
     mentions_nick,
@@ -467,3 +469,51 @@ async def test_run_sends_quit_on_server_disconnect(monkeypatch) -> None:
         await client.run()
     # QUIT was sent in the finally block before close
     assert "QUIT :goodbye from test" in writer.lines
+
+
+@pytest.mark.asyncio
+async def test_kick_notifies_runtime_and_requests_delayed_reconnect(monkeypatch) -> None:
+    class Reader:
+        def __init__(self) -> None:
+            self.lines = iter([
+                b":server 001 ghost :welcome\r\n",
+                b":operator!op@example KICK #test ghost :too rude\r\n",
+            ])
+
+        async def readline(self) -> bytes:
+            return next(self.lines)
+
+    class Writer:
+        def write(self, _data: bytes) -> None:
+            return None
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    events: list[IRCKickEvent] = []
+
+    async def open_connection(*_args, **_kwargs):
+        return Reader(), Writer()
+
+    async def handler(_message) -> None:
+        return None
+
+    async def kick_handler(event: IRCKickEvent) -> None:
+        events.append(event)
+
+    monkeypatch.setattr("cellar.irc.asyncio.open_connection", open_connection)
+    client = IRCClient(
+        IRCProfile(network="test", host="localhost", tls=False, nick="ghost",
+                   username="ghost", realname="Ghost", channels=["#test"]),
+        handler, kick_handler=kick_handler,
+    )
+    with pytest.raises(IRCKickedError, match="kicked from #test"):
+        await client.run()
+
+    assert events == [IRCKickEvent("#test", "operator", "too rude")]

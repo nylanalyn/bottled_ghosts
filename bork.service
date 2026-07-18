@@ -1,5 +1,5 @@
 [Unit]
-Description=Bottled Ghosts IRC bots
+Description=Bottled Ghosts IRC bot: Bork
 Documentation=file:///home/aureate/code/bottled_ghosts/README.md
 After=network-online.target
 Wants=network-online.target
@@ -7,7 +7,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/aureate/code/bottled_ghosts
-ExecStart=/home/aureate/code/bottled_ghosts/.venv/bin/bottled-ghosts --database /home/aureate/code/bottled_ghosts/spirits.db run-all
+ExecStart=/home/aureate/code/bottled_ghosts/.venv/bin/bottled-ghosts --database /home/aureate/code/bottled_ghosts/spirits.db run 4
 Restart=on-failure
 KillSignal=SIGTERM
 TimeoutStopSec=15s

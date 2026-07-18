@@ -20,14 +20,27 @@ bottled-ghosts list
 bottled-ghosts run 1
 ```
 
-Run every enabled Bottle concurrently with:
+Run a Bottle directly by ID with `bottled-ghosts run BOT_ID`. Each Bottle
+reconnects independently with exponential backoff capped at 60 seconds; Ctrl-C
+closes its IRC connection cleanly.
+
+## systemd user services
+
+The repository provides one unit per configured production Bottle, so operators
+can run only the bots they want. Install the units, then enable and start the
+desired services:
 
 ```bash
-bottled-ghosts run-all
+mkdir -p ~/.config/systemd/user
+cp aria.service frauderick.service rumi.service bork.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now aria.service rumi.service
 ```
 
-Each Bottle reconnects independently with exponential backoff capped at 60
-seconds. Ctrl-C cancels all Bottle tasks and closes their IRC connections.
+The service-to-Bottle mapping is `aria` → ID 1, `frauderick` → ID 2, `rumi` →
+ID 3, and `bork` → ID 4. For example, stop Frauderick without affecting the
+others with `systemctl --user stop frauderick.service`; start it again with
+`systemctl --user start frauderick.service`.
 
 Incoming speakers are resolved to UUIDs from IRC account tags, hostmasks, and
 nicks, in that order. Message bodies are indexed by SQLite FTS5. Before every

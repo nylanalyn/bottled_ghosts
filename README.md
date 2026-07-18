@@ -126,6 +126,20 @@ bottled-ghosts ignore-delete 1 2 --actor aureate
 `drop` messages are not logged or processed. `no_response` messages remain
 available as channel context but cannot trigger or extend a reply.
 
+For high-volume utility commands, enable the content-filter module. It accepts
+Python regular expressions, drops matching lines before other modules (including
+`moods`) see them, and removes them from the Bottle's prompt history. Addressed
+messages always bypass the filter by default, so `!weather frauderick` and
+`[weather] for frauderick` still reach Frauderick:
+
+```bash
+bottled-ghosts module-settings FRAUDERICK_BOT_ID ignore '{"patterns":["^!reel\\b","^!cast\\b","^!darts\\b","^!word\\b","^\\[fishing\\]","^\\[weather\\]"]}' --actor aureate
+bottled-ghosts module-toggle FRAUDERICK_BOT_ID ignore on --actor aureate
+```
+
+Set `"allow_addressed": false` only if matching addressed lines should also be
+dropped. Reconnect after changing the module configuration.
+
 Enable occasional unaddressed channel participation with the optional ambient
 chat module. Its line counter and random threshold survive restarts:
 

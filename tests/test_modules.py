@@ -124,3 +124,43 @@ async def test_enabled_module_loads_from_sqlite(tmp_path) -> None:
         assert '"name": "test"' in events[0]["new_value"]
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ignore_module_stops_later_message_modules_and_preserves_mentions(tmp_path) -> None:
+    configured = bottle(tmp_path)
+    ignored = ModuleContext(
+        db=object(),  # type: ignore[arg-type]
+        bottle=configured,
+        message=IncomingIRCMessage(nick="utility", hostmask=None, account=None,
+                                   target="#test", body="[fishing] Alice caught a boot"),
+        user_id="utility", source_message_id=1, bot_nick="ghost",
+        module_settings={"ignore": {"patterns": [r"^\[fishing\]"]}},
+    )
+    addressed = ModuleContext(
+        db=object(),  # type: ignore[arg-type]
+        bottle=configured,
+        message=IncomingIRCMessage(nick="utility", hostmask=None, account=None,
+                                   target="#test", body="[weather] for ghost: rain"),
+        user_id="utility", source_message_id=2, bot_nick="ghost",
+        module_settings={"ignore": {"patterns": [r"^\[weather\]"]}},
+    )
+
+    class LaterModule:
+        def __init__(self) -> None:
+            self.seen = 0
+
+        async def on_message(self, _ctx: ModuleContext) -> None:
+            self.seen += 1
+
+    from modules.ignore import Module as IgnoreModule
+
+    later = LaterModule()
+    runner = ModuleRunner([("ignore", IgnoreModule()), ("later", later)], ignored.module_settings)
+    await runner.on_message(ignored)
+    assert ignored.drop_message is True
+    assert later.seen == 0
+
+    await runner.on_message(addressed)
+    assert addressed.drop_message is False
+    assert later.seen == 1

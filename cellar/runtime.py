@@ -326,6 +326,11 @@ async def run_bottle_once(
                 ),
             )
             await modules.on_message(module_context)
+            if module_context.drop_message:
+                await db.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+                await db.commit()
+                logger.info("dropping content-filtered message from %s", message.nick)
+                return
             commands = list(module_context.commands)
             replies_enabled = await response_enabled(db, bottle_id=bottle.id)
             request = module_context.room_break

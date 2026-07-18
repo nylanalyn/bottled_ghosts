@@ -37,6 +37,7 @@ class ModuleContext:
     conversation: str | None = None
     bot_nick: str | None = None
     response_allowed: bool = True
+    drop_message: bool = False
     request_response: bool = False
     suppress_automatic_response: bool = False
     monitor_when_silent: bool = False
@@ -128,6 +129,8 @@ class ModuleRunner:
                 if callback is None:
                     continue
                 await callback(ctx)
+                if hook == "on_message" and isinstance(ctx, ModuleContext) and ctx.drop_message:
+                    return
             except Exception:
                 logger.exception("module %s failed during %s", type(module).__name__, hook)
                 if hook != "stop":

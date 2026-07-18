@@ -10,6 +10,7 @@ from modules.bot_lives import Module as BotLivesModule
 from modules.channel_context import Module as ChannelContextModule
 from modules.ambient_chat import Module as AmbientChatModule
 from modules.fishing import Module as FishingModule
+from modules.ignore import Module as IgnoreModule
 from modules.moods import Module as MoodsModule
 from modules.admin_api import Module as AdminAPIModule
 from modules.emergency_alert import Module as EmergencyAlertModule
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 ModuleFactory = Callable[[], ModuleContract]
 
 REGISTRY: tuple[tuple[str, ModuleFactory], ...] = (
+    ("ignore", IgnoreModule),
     ("admin_api", AdminAPIModule),
     ("ambient_chat", AmbientChatModule),
     ("anti_repeat", AntiRepeatModule),
@@ -40,7 +42,9 @@ def module_factory(name: str) -> ModuleFactory | None:
 async def load_modules(db: aiosqlite.Connection, *, bottle_id: int) -> ModuleRunner:
     cursor = await db.execute(
         """SELECT module_name, settings_json FROM bot_modules
-           WHERE bot_id = ? AND enabled = 1 ORDER BY module_name""", (bottle_id,),
+           WHERE bot_id = ? AND enabled = 1
+           ORDER BY CASE module_name WHEN 'ignore' THEN 0 ELSE 1 END, module_name""",
+        (bottle_id,),
     )
     loaded: list[tuple[str, ModuleContract]] = []
     settings: dict[str, dict[str, object]] = {}

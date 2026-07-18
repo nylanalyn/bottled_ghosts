@@ -333,6 +333,69 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
 
 
 @pytest.mark.asyncio
+async def test_content_ignore_drops_utility_spam_but_keeps_addressed_lines(
+    monkeypatch, tmp_path,
+) -> None:
+    database = tmp_path / "content-ignore.db"
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(database)
+    bottle_id = await create_bottle(
+        db, name="test", soul_prompt_path=soul,
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost", channels=["#test"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+        cooldown_seconds=0, listen_window_seconds=0.01,
+    )
+    await set_module_enabled(db, bottle_id=bottle_id, module_name="ignore", enabled=True)
+    await set_module_settings(
+        db, bottle_id=bottle_id, module_name="ignore",
+        settings={"patterns": [r"^\[fishing\]", r"^\[weather\]"]}, actor="test",
+    )
+    bottle = await load_bottle(db, bottle_id)
+    prompts: list[list[dict[str, str]]] = []
+    sent: list[tuple[str, str]] = []
+
+    class FakeIRCClient:
+        def __init__(self, _profile, handler) -> None:
+            self.handler = handler
+
+        async def run(self) -> None:
+            await self.handler(IncomingIRCMessage(
+                nick="utility", hostmask=None, account=None, target="#test",
+                body="[fishing] Alice caught a boot",
+            ))
+            await self.handler(IncomingIRCMessage(
+                nick="utility", hostmask=None, account=None, target="#test",
+                body="[weather] for ghost: rain",
+            ))
+            await asyncio.sleep(0.03)
+
+        async def send_message(self, target: str, body: str) -> None:
+            sent.append((target, body))
+
+    async def fake_complete(_profile, prompt: list[dict[str, str]]) -> str:
+        prompts.append(prompt)
+        return "bring an umbrella"
+
+    monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+    monkeypatch.setattr("cellar.runtime.complete", fake_complete)
+    try:
+        await run_bottle_once(db, bottle)
+        assert len(prompts) == 1
+        assert "[weather] for ghost: rain" in prompts[0][1]["content"]
+        assert "[fishing] Alice caught a boot" not in prompts[0][1]["content"]
+        assert sent == [("#test", "bring an umbrella")]
+        logged = [row[0] for row in await (await db.execute(
+            "SELECT body FROM messages ORDER BY id"
+        )).fetchall()]
+        assert "[fishing] Alice caught a boot" not in logged
+        assert "[weather] for ghost: rain" in logged
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
 async def test_bot_prior_reply_appears_as_assistant_turn(monkeypatch, tmp_path) -> None:
     # The bot's own logged prior replies must reach the LLM as assistant role
     # messages, not as flat <nick> text in a user turn. This is what stops the

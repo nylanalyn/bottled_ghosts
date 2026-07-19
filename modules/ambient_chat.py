@@ -1,12 +1,20 @@
+import logging
 import random
 
 from cellar.irc import irc_casefold, mentions_any_nick
 from cellar.module_api import ModuleContext, NightlyContext
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_MIN_LINES = 20
 DEFAULT_MAX_LINES = 40
 DEFAULT_UTILITY_MIN_LINES = 8
 DEFAULT_UTILITY_MAX_LINES = 15
+
+# Offered to the model on ambient/utility triggers so unprompted speech is an
+# option, not an obligation. Real regulars ignore most of what scrolls past;
+# forcing a line every trigger is what produces spectator commentary.
+PASS_SENTINEL = "[pass]"
 
 
 class Module:
@@ -146,20 +154,36 @@ class Module:
         if ctx.response_reason == "ambient":
             ctx.prompt_sections.append(
                 "This is an occasional ambient contribution, not a direct reply. "
-                "Respond naturally to the current channel conversation without claiming "
-                "someone addressed you."
+                "You have been half-following the room and may say something if you "
+                "have something worth saying. Speak as a participant, not a spectator: "
+                "pick up the topic with your own take or experience, join in on a game "
+                "or activity people are playing, or bring up something of your own. "
+                "Do not comment on what other people are doing or describe the room's "
+                "behavior — regulars don't narrate the channel. Never claim someone "
+                f"addressed you. If nothing natural comes to mind, reply with exactly "
+                f"{PASS_SENTINEL} and nothing else, and you will simply stay quiet."
             )
         elif ctx.response_reason == "utility_event":
             ctx.prompt_sections.append(
                 "This is an occasional reaction to a relevant channel event from an "
                 "automated utility bot, not a reply to an invitation or question. "
-                "Respond naturally without claiming someone addressed you."
+                "React to the event itself the way another player would — join in or "
+                "respond to its content. Do not comment on other people's behavior or "
+                "narrate what the room is doing. Never claim someone addressed you. "
+                f"If you have nothing worth adding, reply with exactly {PASS_SENTINEL} "
+                "and nothing else, and you will simply stay quiet."
             )
 
     async def after_response(self, ctx: ModuleContext) -> None:
         if irc_casefold(ctx.message.target) == irc_casefold(ctx.bottle.irc.nick):
             return
         if ctx.response_reason in ("ambient", "utility_event"):
+            if ctx.response is not None and ctx.response.strip().lower() == PASS_SENTINEL:
+                logger.info(
+                    "%s passed on an %s trigger in %s",
+                    ctx.bottle.irc.nick, ctx.response_reason, ctx.message.target,
+                )
+                ctx.response = None
             return
         minimum, maximum = self._limits(ctx)
         next_trigger = random.randint(minimum, maximum)

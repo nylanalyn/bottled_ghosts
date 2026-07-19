@@ -236,7 +236,7 @@ async def run_bottle_once(
                 MOOD_BREAK_FALLBACK, max_lines=1, max_chars=bottle.max_chars,
                 bot_nick=active_nick(),
             )
-        if not lines:
+        if not lines and module_context.response is not None:
             logger.warning("LLM response was empty after sanitization")
         for line in lines:
             await cooldown.wait()

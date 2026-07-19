@@ -5,6 +5,7 @@ from cellar.module_api import ModuleContext
 from cellar.module_loader import load_modules
 from cellar.module_store import set_module_enabled, set_module_settings
 from cellar.storage import create_bottle, load_bottle, open_database
+from modules.ambient_chat import PASS_SENTINEL
 
 
 @pytest.mark.asyncio
@@ -75,6 +76,24 @@ async def test_ambient_chat_persists_threshold_and_respects_eligibility(tmp_path
             "SELECT eligible_lines_seen, next_trigger_line FROM ambient_chat_state"
         )).fetchone()
         assert reset is not None and tuple(reset) == (0, 3)
+
+        # The prompt offers a pass option; a sentinel reply on an ambient
+        # trigger is suppressed so the Bottle genuinely stays quiet.
+        assert PASS_SENTINEL in contexts[-1].prompt_sections[-1]
+        contexts[-1].response_reason = "ambient"
+        contexts[-1].response = f"  {PASS_SENTINEL.upper()} "
+        await runner.after_response(contexts[-1])
+        assert contexts[-1].response is None
+
+        # A real ambient reply is left untouched, and an addressed reply that
+        # happens to equal the sentinel is not suppressed.
+        contexts[-1].response = "joining in on the topic"
+        await runner.after_response(contexts[-1])
+        assert contexts[-1].response == "joining in on the topic"
+        contexts[-1].response_reason = "addressed"
+        contexts[-1].response = PASS_SENTINEL
+        await runner.after_response(contexts[-1])
+        assert contexts[-1].response == PASS_SENTINEL
     finally:
         await db.close()
 

@@ -5,6 +5,7 @@ from cellar.memory_consolidation import (
     accept_consolidation_proposal,
     create_consolidation_proposal,
     get_consolidation_proposal,
+    list_consolidation_proposals,
     reject_consolidation_proposal,
     scan_consolidation_proposals,
 )
@@ -19,6 +20,7 @@ from cellar.memory_store import (
 )
 from cellar.models import (
     ExtractedMemory,
+    ConsolidationGroup,
     IRCMessage,
     IRCProfile,
     IncomingIRCMessage,
@@ -240,6 +242,89 @@ async def test_rejected_group_is_not_proposed_again(tmp_path, monkeypatch) -> No
             db, profile=bottle.llm, bot_id=bot_id, user_id=user_id,
             actor="scanner",
         ) == 0
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_scan_keeps_new_proposals_disjoint(tmp_path, monkeypatch) -> None:
+    db = await open_database(tmp_path / "disjoint.db")
+    try:
+        bot_id, user_id = await _scope(db, tmp_path)
+        memory_ids = []
+        for index in range(4):
+            candidate_id = await _candidate(
+                db, bot_id=bot_id, user_id=user_id,
+                text=f"Potentially related memory {index}",
+            )
+            memory_ids.append(await approve_memory_candidate(
+                db, candidate_id=candidate_id, actor="tester",
+            ))
+
+        async def fake_groups(_profile, _rows) -> list[ConsolidationGroup]:
+            return [
+                ConsolidationGroup(
+                    memory_ids=memory_ids[:3], proposed_text="Broad group",
+                    proposed_type="relationship", proposed_confidence=0.9,
+                    rationale="too broad",
+                ),
+                ConsolidationGroup(
+                    memory_ids=[memory_ids[0], memory_ids[3]],
+                    proposed_text="Precise pair one",
+                    proposed_type="relationship", proposed_confidence=0.8,
+                    rationale="precise",
+                ),
+                ConsolidationGroup(
+                    memory_ids=[memory_ids[1], memory_ids[2]],
+                    proposed_text="Precise pair two",
+                    proposed_type="relationship", proposed_confidence=0.7,
+                    rationale="precise",
+                ),
+            ]
+
+        monkeypatch.setattr(
+            "cellar.memory_consolidation._propose_groups", fake_groups,
+        )
+        bottle = await load_bottle(db, bot_id)
+        assert await scan_consolidation_proposals(
+            db, profile=bottle.llm, bot_id=bot_id, user_id=user_id,
+            actor="scanner",
+        ) == 2
+        proposals = await list_consolidation_proposals(db)
+        assert [set(proposal.memory_ids) for proposal in proposals] == [
+            {memory_ids[0], memory_ids[3]},
+            {memory_ids[1], memory_ids[2]},
+        ]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_invalid_model_batch(tmp_path, monkeypatch) -> None:
+    db = await open_database(tmp_path / "invalid-batch.db")
+    try:
+        bot_id, user_id = await _scope(db, tmp_path)
+        for index in range(2):
+            candidate_id = await _candidate(
+                db, bot_id=bot_id, user_id=user_id,
+                text=f"Memory {index}",
+            )
+            await approve_memory_candidate(
+                db, candidate_id=candidate_id, actor="tester",
+            )
+
+        async def invalid_groups(_profile, _rows) -> list[ConsolidationGroup]:
+            raise ValueError("empty model response")
+
+        monkeypatch.setattr(
+            "cellar.memory_consolidation._propose_groups", invalid_groups,
+        )
+        bottle = await load_bottle(db, bot_id)
+        assert await scan_consolidation_proposals(
+            db, profile=bottle.llm, bot_id=bot_id, user_id=user_id,
+            actor="scanner",
+        ) == 0
+        assert await list_consolidation_proposals(db) == []
     finally:
         await db.close()
 

@@ -1,5 +1,6 @@
 from collections import Counter
 import json
+import logging
 
 import aiosqlite
 from pydantic import ValidationError
@@ -20,6 +21,7 @@ from cellar.models import (
 
 CONSOLIDATION_BATCH_SIZE = 35
 CONSOLIDATION_BATCH_OVERLAP = 10
+logger = logging.getLogger(__name__)
 
 
 async def create_consolidation_proposal(
@@ -280,17 +282,38 @@ async def scan_consolidation_proposals(
         for proposal in await list_consolidation_proposals(db, status=None)
         if proposal.bot_id == bot_id and proposal.user_id == user_id
     }
+    claimed_memory_ids = {
+        memory_id
+        for proposal in await list_consolidation_proposals(db, status="pending")
+        if proposal.bot_id == bot_id and proposal.user_id == user_id
+        for memory_id in proposal.memory_ids
+    }
     created = 0
     for batch in _consolidation_batches(rows):
-        groups = await _propose_groups(profile, batch)
+        try:
+            groups = await _propose_groups(profile, batch)
+        except ValueError as error:
+            logger.warning(
+                "skipping invalid consolidation response for Bottle %d user %s: %s",
+                bot_id, user_id, error,
+            )
+            continue
         valid_ids = {int(row["id"]) for row in batch}
-        for group in groups:
+        for group in sorted(
+            groups,
+            key=lambda item: (
+                len(set(item.memory_ids)),
+                -item.proposed_confidence,
+                item.proposed_text,
+            ),
+        ):
             member_ids = list(dict.fromkeys(group.memory_ids))
             member_key = frozenset(member_ids)
             if (
                 len(member_ids) < 2
                 or not set(member_ids) <= valid_ids
                 or member_key in existing
+                or not set(member_ids).isdisjoint(claimed_memory_ids)
             ):
                 continue
             await create_consolidation_proposal(
@@ -301,6 +324,7 @@ async def scan_consolidation_proposals(
                 rationale=group.rationale, actor=actor,
             )
             existing.add(member_key)
+            claimed_memory_ids.update(member_ids)
             created += 1
     return created
 
@@ -318,9 +342,13 @@ async def _propose_groups(
             "role": "system",
             "content": (
                 "Review Bottle-owned memories about one person. Identify only groups "
-                "that express the same durable belief, relationship, preference, or "
-                "project in redundant wording. Same topic is not enough. Do not merge "
-                "contradictions, changes over time, or separate events. Return JSON only: "
+                "that are paraphrases of the same durable belief, relationship, "
+                "preference, or project. Replacing every member with the proposed text "
+                "must lose no independently useful fact. Same topic, person, mood, or "
+                "relationship is not enough. Do not combine a general belief with a "
+                "specific event or example. Do not merge contradictions, changes over "
+                "time, or separate events. Prefer small precise groups and omit anything "
+                "uncertain. Return JSON only: "
                 '{"groups":[{"memory_ids":[1,2],"proposed_text":"one durable belief",'
                 '"proposed_type":"relationship","proposed_confidence":0.8,'
                 '"rationale":"why these are redundant"}]}. '

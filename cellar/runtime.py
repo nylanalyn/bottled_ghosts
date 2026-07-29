@@ -242,7 +242,15 @@ async def run_bottle_once(
             logger.warning("LLM response was empty after sanitization")
         for line in lines:
             await cooldown.wait()
-            await client.send_message(reply_target, line)
+            action_body = (
+                line[4:].strip()
+                if line[:4].casefold() == "/me " and line[4:].strip()
+                else None
+            )
+            if action_body is not None:
+                await client.send_action(reply_target, action_body)
+            else:
+                await client.send_message(reply_target, line)
             async with database_lock:
                 await log_message(
                     db, IRCMessage(network=bottle.irc.network, channel=channel,

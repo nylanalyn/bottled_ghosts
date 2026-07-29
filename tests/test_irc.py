@@ -296,6 +296,66 @@ async def test_send_message_enforces_irc_byte_limit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_action_emits_ctcp_and_enforces_irc_byte_limit() -> None:
+    class Writer:
+        def __init__(self) -> None:
+            self.data = b""
+
+        def write(self, data: bytes) -> None:
+            self.data = data
+
+        async def drain(self) -> None:
+            return None
+
+    async def handler(_message) -> None:
+        return None
+
+    client = IRCClient(
+        IRCProfile(network="test", host="localhost", tls=False, nick="ghost",
+                   username="ghost", realname="Ghost", channels=["#test"]),
+        handler,
+    )
+    writer = Writer()
+    client.writer = writer  # type: ignore[assignment]
+    await client.send_action("#test", "waves " + ("é" * 400))
+
+    assert writer.data.startswith(b"PRIVMSG #test :\x01ACTION waves ")
+    assert writer.data.endswith(b"\x01\r\n")
+    assert len(writer.data) <= 512
+    assert len(writer.data[:-2]) <= 510
+    writer.data[:-2].decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_send_action_rejects_empty_or_multiline_injection() -> None:
+    class Writer:
+        def __init__(self) -> None:
+            self.data = b""
+
+        def write(self, data: bytes) -> None:
+            self.data = data
+
+        async def drain(self) -> None:
+            return None
+
+    async def handler(_message) -> None:
+        return None
+
+    client = IRCClient(
+        IRCProfile(network="test", host="localhost", tls=False, nick="ghost",
+                   username="ghost", realname="Ghost", channels=["#test"]),
+        handler,
+    )
+    writer = Writer()
+    client.writer = writer  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="cannot be empty"):
+        await client.send_action("#test", "\r\n")
+    await client.send_action("#test", "waves\x01\r\nJOIN #other")
+    assert writer.data == b"PRIVMSG #test :\x01ACTION waves JOIN #other\x01\r\n"
+
+
+@pytest.mark.asyncio
 async def test_user_modes_are_set_before_channel_join(monkeypatch) -> None:
     class Reader:
         def __init__(self) -> None:

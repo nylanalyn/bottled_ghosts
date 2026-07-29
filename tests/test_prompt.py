@@ -10,6 +10,8 @@ def test_system_message_carries_rules_and_soul() -> None:
     assert "natural conversational length" in result[0]["content"]
     assert "artificially brief" in result[0]["content"]
     assert "Do not prefix your reply" in result[0]["content"]
+    assert "start that reply line with '/me '" in result[0]["content"]
+    assert "do not wrap actions in asterisks" in result[0]["content"]
     assert result[0]["content"].endswith("Be spectral.")
 
 

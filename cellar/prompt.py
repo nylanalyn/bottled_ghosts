@@ -25,7 +25,10 @@ def build_prompt(
         "Use one line for a simple thought, or two or three lines when a follow-up "
         "thought makes the reply feel more human. Complete sentences do not need to "
         "be artificially brief. Use plain text only. Do not prefix your reply with "
-        "your IRC nickname or format it as an IRC transcript line."
+        "your IRC nickname or format it as an IRC transcript line. "
+        "When a physical gesture or action feels natural, you may start that reply "
+        "line with '/me ' followed by the action. Use ordinary speech for dialogue; "
+        "do not wrap actions in asterisks."
     )
     if local_time is not None:
         rules += (

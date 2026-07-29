@@ -2,7 +2,9 @@
 
 The v0.1 runtime connects one configured Bottle to IRC, logs messages to SQLite,
 calls an OpenAI-compatible chat endpoint when its nick is mentioned, sanitizes the
-response, and sends it with hard output limits.
+response, and sends it with hard output limits. Characters may emit real IRC
+actions by beginning a generated line with `/me `; the runtime converts that
+line to CTCP `ACTION` without bypassing normal limits or cooldowns.
 
 Install the pinned Python version and development environment with UV:
 

@@ -195,6 +195,23 @@ class IRCClient:
             raise ValueError("IRC message target leaves no room for a body")
         await self.send_raw(f"{prefix}{truncate_utf8(body, available)}")
 
+    async def send_action(self, target: str, body: str) -> None:
+        body = single_line_irc_text(body).replace("\x01", "")
+        if not body:
+            raise ValueError("IRC action body cannot be empty")
+        prefix = f"PRIVMSG {target} :\x01ACTION "
+        suffix = "\x01"
+        available = (
+            IRC_PAYLOAD_BYTES
+            - len(prefix.encode("utf-8"))
+            - len(suffix.encode("utf-8"))
+        )
+        if available < 1:
+            raise ValueError("IRC action target leaves no room for a body")
+        await self.send_raw(
+            f"{prefix}{truncate_utf8(body, available)}{suffix}"
+        )
+
     async def part_channel(self, channel: str, reason: str = "Taking thirty minutes to breathe.") -> None:
         """Leave one channel with a bounded, single-line IRC PART reason."""
         prefix = f"PART {channel} :"

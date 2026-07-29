@@ -32,6 +32,12 @@ def test_sanitize_preserves_other_nick_prefixes() -> None:
     ) == ["<alice> said hello"]
 
 
+def test_sanitize_preserves_action_marker_and_cleans_markdown() -> None:
+    assert sanitize(
+        "/me *waves slowly*", max_lines=1, max_chars=100,
+    ) == ["/me waves slowly"]
+
+
 def test_strip_private_reasoning_preserves_summary_layout() -> None:
     assert strip_private_reasoning("<think>private</think>\nUseful\nsummary") == "Useful\nsummary"
 

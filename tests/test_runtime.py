@@ -234,7 +234,7 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
         irc=IRCProfile(network="test", host="localhost", nick="ghost",
                        username="ghost", realname="Ghost", channels=["#test"]),
         llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
-        listen_window_seconds=0.01, extract_memories=True,
+        cooldown_seconds=0, listen_window_seconds=0.01, extract_memories=True,
     )
     bottle = await load_bottle(db, bottle_id)
     await add_ignore_rule(
@@ -248,7 +248,7 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
     hook_counts = {"on_message": 0, "before_prompt": 0, "after_response": 0}
     prompts: list[list[dict[str, str]]] = []
     extracted_bodies: list[str] = []
-    sent: list[tuple[str, str]] = []
+    sent: list[tuple[str, str, str]] = []
 
     class FakeModules:
         async def on_message(self, _context) -> None:
@@ -284,7 +284,10 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
             await asyncio.sleep(0.03)
 
         async def send_message(self, target: str, body: str) -> None:
-            sent.append((target, body))
+            sent.append(("message", target, body))
+
+        async def send_action(self, target: str, body: str) -> None:
+            sent.append(("action", target, body))
 
     async def fake_load_modules(_db, *, bottle_id: int):
         assert bottle_id == bottle.id
@@ -292,7 +295,7 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
 
     async def fake_complete(_profile, prompt: list[dict[str, str]]) -> str:
         prompts.append(prompt)
-        return "one reply"
+        return "/me nods slowly\none reply"
 
     async def fake_extract(_profile, *, speaker: str, body: str):
         assert speaker == "alice"
@@ -312,7 +315,10 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
         assert "ghost: soft context" in prompts[0][1]["content"]
         assert "hard ignored" not in prompts[0][1]["content"]
         assert extracted_bodies == ["ghost: first line\nsecond line"]
-        assert sent == [("#test", "one reply")]
+        assert sent == [
+            ("action", "#test", "nods slowly"),
+            ("message", "#test", "one reply"),
+        ]
         source = await (await db.execute(
             """SELECT m.body FROM memory_candidates c
                JOIN messages m ON m.id = c.source_message_id"""
@@ -328,6 +334,8 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
         )).fetchall()]
         assert "ghost: hard ignored" not in logged_bodies
         assert "ghost: soft context" in logged_bodies
+        assert "/me nods slowly" in logged_bodies
+        assert "one reply" in logged_bodies
     finally:
         await db.close()
 

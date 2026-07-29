@@ -615,6 +615,10 @@ response but cannot send directly or bypass runtime ignore/flood controls.
 
 All LLM output must be sanitized before IRC.
 
+A sanitized response line beginning with `/me ` is sent as a CTCP `ACTION`.
+Actions use the same line count, character limit, IRC byte limit, cooldown, and
+SQLite logging path as ordinary replies.
+
 Pipeline:
 
 1. strip `<think>`

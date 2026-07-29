@@ -84,12 +84,17 @@ async def test_explicit_uuid_merge_moves_identities(tmp_path) -> None:
                ) VALUES (1, ?, ?, 'likes tea', 'preference', 0.9)""",
             (duplicate, message.lastrowid),
         )
-        await db.execute(
+        memory = await db.execute(
             """INSERT INTO user_memories(
-                   bot_id, user_id, source_candidate_id, memory_text,
-                   memory_type, confidence
-               ) VALUES (1, ?, ?, 'likes tea', 'preference', 0.9)""",
-            (duplicate, candidate.lastrowid),
+                   bot_id, user_id, memory_text, memory_type, confidence
+               ) VALUES (1, ?, 'likes tea', 'preference', 0.9)""",
+            (duplicate,),
+        )
+        await db.execute(
+            """INSERT INTO user_memory_evidence(
+                   memory_id, candidate_id, linked_by
+               ) VALUES (?, ?, 'test')""",
+            (memory.lastrowid, candidate.lastrowid),
         )
         await db.commit()
         await merge_users(db, keep_id=keep, merge_id=duplicate)

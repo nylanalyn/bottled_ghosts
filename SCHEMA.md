@@ -1,6 +1,6 @@
 # Database schema
 
-The schema below reflects migration 029.
+The schema below reflects migration 031.
 
 ## schema_migrations
 
@@ -62,15 +62,31 @@ Stores the complete ordered message provenance used to extract a memory candidat
 
 ## user_memories
 
-Stores operator-approved long-term memory belonging to one Bottle's perspective. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `user_id TEXT NOT NULL`, `source_candidate_id INTEGER UNIQUE`, `memory_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_used_at TEXT`, `expires_at TEXT`.
+Stores the current operator-approved long-term beliefs belonging to one Bottle's perspective. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `user_id TEXT NOT NULL`, `memory_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `state TEXT NOT NULL DEFAULT 'active'`, `merged_into_id INTEGER`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_used_at TEXT`, `expires_at TEXT`.
 
-Foreign keys: `bot_id` references `bots(id)` with cascading deletion; `user_id` references `users(id)` with cascading deletion; `source_candidate_id` references `memory_candidates(id)` with deletion setting it to null. Indexes: `user_memories_user_idx(bot_id, user_id, memory_type, id DESC)` and partial `user_memories_expiry_idx(expires_at)`. Memory types use the same five-value constraint as sediment. Expired rows remain available for inspection but are excluded from prompt retrieval. Runtime retrieval always requires both `bot_id` and `user_id`, so one Bottle never receives another Bottle's memories.
+Foreign keys: `bot_id` references `bots(id)` with cascading deletion; `user_id` references `users(id)` with cascading deletion; `merged_into_id` references `user_memories(id)` with deletion restricted. States are `active` and `merged`; an active row cannot have a merge target and a merged row must have one. Indexes: `user_memories_user_idx(bot_id, user_id, state, memory_type, id DESC)` and partial `user_memories_expiry_idx(expires_at)`. Memory types use the same five-value constraint as sediment. Expired and merged rows remain available for inspection but are excluded from prompt retrieval. Runtime retrieval always requires both `bot_id` and `user_id`, so one Bottle never receives another Bottle's memories.
+
+## user_memory_evidence
+
+Links one canonical memory to every approved sediment candidate supporting it. Columns: `memory_id INTEGER NOT NULL`, `candidate_id INTEGER NOT NULL UNIQUE`, `linked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `linked_by TEXT NOT NULL`. Primary key: `(memory_id, candidate_id)`. Foreign keys: `memory_id` references `user_memories(id)` with cascading deletion; `candidate_id` references `memory_candidates(id)` with deletion restricted. Index: `user_memory_evidence_memory_idx(memory_id, candidate_id)`. The `user_memory_evidence_scope_insert` and `user_memory_evidence_scope_update` triggers reject links whose memory and candidate do not share the same Bottle and user.
+
+## user_memories_fts
+
+External-content FTS5 virtual table indexing `user_memories.memory_text` with the memory ID as its row ID. The `user_memories_fts_insert`, `user_memories_fts_update`, and `user_memories_fts_delete` triggers keep the index synchronized. Prompt retrieval scopes FTS matches to an active, unexpired memory's Bottle and user before adding relationship/identity baseline memories and recent fallback memories.
+
+## memory_consolidation_proposals
+
+Stores operator-review proposals without mutating trusted memory. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `user_id TEXT NOT NULL`, `proposed_text TEXT NOT NULL`, `proposed_type TEXT NOT NULL`, `proposed_confidence REAL NOT NULL`, `rationale TEXT NOT NULL`, `status TEXT NOT NULL DEFAULT 'pending'`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `reviewed_at TEXT`, `reviewed_by TEXT`. Foreign keys: `bot_id` references `bots(id)` with cascading deletion; `user_id` references `users(id)` with cascading deletion. Statuses are `pending`, `accepted`, and `rejected`; memory types use the standard five-value constraint. Index: `memory_consolidation_review_idx(status, bot_id, user_id, id)`.
+
+## memory_consolidation_members
+
+Stores the ordered active-memory set considered by a consolidation proposal. Columns: `proposal_id INTEGER NOT NULL`, `memory_id INTEGER NOT NULL`, `ordinal INTEGER NOT NULL`. Primary key: `(proposal_id, memory_id)`. Unique constraint: `(proposal_id, ordinal)`. Foreign keys: `proposal_id` references `memory_consolidation_proposals(id)` with cascading deletion; `memory_id` references `user_memories(id)` with deletion restricted. The `memory_consolidation_member_scope_insert` and `memory_consolidation_member_scope_update` triggers require every member to share the proposal's Bottle and user.
 
 ## audit_events
 
 Append-only operator mutation history. Columns: `id INTEGER PRIMARY KEY`, `action TEXT NOT NULL`, `entity_type TEXT NOT NULL`, `entity_id INTEGER NOT NULL`, `related_entity_id INTEGER`, `actor TEXT NOT NULL`, `old_text TEXT`, `new_text TEXT`, `old_type TEXT`, `new_type TEXT`, `old_confidence REAL`, `new_confidence REAL`, `old_status TEXT`, `new_status TEXT`, `old_expires_at TEXT`, `new_expires_at TEXT`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`.
 
-Allowed actions are `approve`, `reject`, and `edit`. Allowed entity types are `memory_candidate` and `user_memory`. Index: `audit_events_entity_idx(entity_type, entity_id, id DESC)`. The `audit_events_no_update` and `audit_events_no_delete` triggers enforce append-only storage.
+Allowed actions are `approve`, `reject`, `edit`, `attach`, `merge`, and `propose`. Allowed entity types are `memory_candidate`, `user_memory`, and `consolidation_proposal`. Index: `audit_events_entity_idx(entity_type, entity_id, id DESC)`. The `audit_events_no_update` and `audit_events_no_delete` triggers enforce append-only storage.
 
 ## bot_modules
 
@@ -168,3 +184,4 @@ Stores runtime-enforced, temporary mood breaks per Bottle and IRC channel. Colum
 - 028: Add persisted, independently paced utility-bot event reactions to the optional ambient-chat module.
 - 029: Add persistent, runtime-enforced mood room breaks and scheduled baseline reset metadata.
 - 030: Scope sediment and approved memories to their owning Bottle, backfilling ownership from source-message provenance.
+- 031: Separate canonical memories from their many evidence candidates, add exact FTS retrieval, archived merge redirects, persistent consolidation proposals, and expanded append-only audit actions.

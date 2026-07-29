@@ -173,14 +173,65 @@ class UserMemory(BaseModel):
     memory_text: str
     memory_type: MemoryType
     confidence: float
+    state: Literal["active", "merged"] = "active"
+    merged_into_id: int | None = None
     expires_at: str | None = None
 
 
 class UserMemoryView(UserMemory):
     bottle_name: str
     canonical_name: str
-    source_candidate_id: int | None
-    source_body: str | None
+    evidence_count: int = 0
+
+
+class MemoryEvidenceView(BaseModel):
+    memory_id: int
+    candidate_id: int
+    candidate_text: str
+    memory_type: MemoryType
+    confidence: float
+    linked_at: str
+    linked_by: str
+    source_messages: list[MemorySource] = Field(default_factory=list)
+
+
+class MemorySuggestion(BaseModel):
+    id: int
+    memory_text: str
+    memory_type: MemoryType
+    confidence: float
+    evidence_count: int
+
+
+class ConsolidationGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    memory_ids: list[int] = Field(min_length=2, max_length=20)
+    proposed_text: str = Field(min_length=1, max_length=500)
+    proposed_type: MemoryType
+    proposed_confidence: float = Field(ge=0, le=1)
+    rationale: str = Field(min_length=1, max_length=500)
+
+
+class ConsolidationGroups(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    groups: list[ConsolidationGroup] = Field(max_length=10)
+
+
+class ConsolidationProposalView(BaseModel):
+    id: int
+    bot_id: int
+    bottle_name: str
+    user_id: str
+    canonical_name: str
+    proposed_text: str
+    proposed_type: MemoryType
+    proposed_confidence: float
+    rationale: str
+    status: Literal["pending", "accepted", "rejected"]
+    memory_ids: list[int]
+    memory_texts: list[str]
 
 
 class LogSearchResult(BaseModel):

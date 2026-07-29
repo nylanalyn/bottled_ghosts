@@ -312,7 +312,7 @@ async def test_approved_memories_are_isolated_by_bottle(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_migration_030_backfills_memory_owners_from_provenance(tmp_path) -> None:
+async def test_migrations_030_and_031_backfill_owner_and_evidence(tmp_path) -> None:
     database = tmp_path / "migration-030.db"
     db = await aiosqlite.connect(database)
     db.row_factory = aiosqlite.Row
@@ -323,7 +323,7 @@ async def test_migration_030_backfills_memory_owners_from_provenance(tmp_path) -
                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
            )"""
     )
-    for version, migration in enumerate(MIGRATIONS[:-1], start=1):
+    for version, migration in enumerate(MIGRATIONS[:29], start=1):
         await migration(db)
         await db.execute(
             "INSERT INTO schema_migrations(version) VALUES (?)", (version,),
@@ -385,12 +385,78 @@ async def test_migration_030_backfills_memory_owners_from_provenance(tmp_path) -
         memory_owner = await (await migrated.execute(
             "SELECT bot_id FROM user_memories"
         )).fetchone()
+        evidence = await (await migrated.execute(
+            """SELECT memory_id, candidate_id, linked_by
+               FROM user_memory_evidence"""
+        )).fetchone()
         violations = await (await migrated.execute(
             "PRAGMA foreign_key_check"
         )).fetchall()
-        assert version is not None and version[0] == 30
+        assert version is not None and version[0] == 31
         assert candidate_owner is not None and candidate_owner[0] == bottle_id
         assert memory_owner is not None and memory_owner[0] == bottle_id
+        assert evidence is not None
+        assert tuple(evidence) == (1, candidate_id, "migration-031")
         assert violations == []
+    finally:
+        await migrated.close()
+
+
+@pytest.mark.asyncio
+async def test_migration_031_preserves_scoped_memory_without_candidate(
+    tmp_path,
+) -> None:
+    database = tmp_path / "migration-031-no-evidence.db"
+    db = await aiosqlite.connect(database)
+    db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA foreign_keys = ON")
+    await db.execute(
+        """CREATE TABLE schema_migrations (
+               version INTEGER PRIMARY KEY,
+               applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+    for version, migration in enumerate(MIGRATIONS[:30], start=1):
+        await migration(db)
+        await db.execute(
+            "INSERT INTO schema_migrations(version) VALUES (?)", (version,),
+        )
+        await db.commit()
+    try:
+        bottle_id = await create_bottle(
+            db, name="aria", soul_prompt_path=tmp_path / "aria.md",
+            irc=IRCProfile(
+                network="local", host="irc.example", nick="aria",
+                username="aria", realname="Aria", channels=["#test"],
+            ),
+            llm=LLMProfile(endpoint="http://localhost", model="test"),
+        )
+        user_id = await resolve_user(
+            db, network="local",
+            identity=IncomingIRCMessage(
+                nick="alice", hostmask="u@h", account="alice",
+                target="#test", body="hello",
+            ),
+        )
+        await db.execute(
+            """INSERT INTO user_memories(
+                   bot_id, user_id, memory_text, memory_type, confidence
+               ) VALUES (?, ?, 'Operator note', 'relationship', 0.8)""",
+            (bottle_id, user_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    migrated = await open_database(database)
+    try:
+        memory = await (await migrated.execute(
+            "SELECT memory_text, state FROM user_memories"
+        )).fetchone()
+        evidence_count = await (await migrated.execute(
+            "SELECT COUNT(*) FROM user_memory_evidence"
+        )).fetchone()
+        assert memory is not None and tuple(memory) == ("Operator note", "active")
+        assert evidence_count is not None and evidence_count[0] == 0
     finally:
         await migrated.close()

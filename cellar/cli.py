@@ -15,10 +15,19 @@ from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore
 from cellar.runtime import run_bottle, run_bottles
 from cellar.memory_store import (
     approve_memory_candidate,
+    attach_memory_candidate,
     edit_user_memory,
+    list_memory_evidence,
     list_memory_candidates,
     list_user_memories,
+    merge_user_memories,
     reject_memory_candidate,
+)
+from cellar.memory_consolidation import (
+    accept_consolidation_proposal,
+    list_consolidation_proposals,
+    reject_consolidation_proposal,
+    scan_consolidation_proposals,
 )
 from cellar.module_loader import available_modules
 from cellar.module_store import (
@@ -189,6 +198,15 @@ async def async_main(args: argparse.Namespace) -> None:
                 db, candidate_id=args.candidate_id, actor=args.actor
             )
             print(f"Rejected candidate {args.candidate_id}")
+        elif args.command == "sediment-attach":
+            await attach_memory_candidate(
+                db, candidate_id=args.candidate_id, memory_id=args.memory_id,
+                actor=args.actor,
+            )
+            print(
+                f"Attached candidate {args.candidate_id} as evidence for "
+                f"memory {args.memory_id}"
+            )
         elif args.command == "memories":
             for user_memory in await list_user_memories(
                 db, bot_id=args.bottle_id, user_id=args.user_id,
@@ -202,6 +220,59 @@ async def async_main(args: argparse.Namespace) -> None:
                 memory_type=args.memory_type, confidence=args.confidence, actor=args.actor,
             )
             print(f"Updated memory {args.memory_id}")
+        elif args.command == "memory-evidence":
+            for evidence in await list_memory_evidence(
+                db, memory_id=args.memory_id,
+            ):
+                print(
+                    f"{evidence.candidate_id}\t{evidence.memory_type}\t"
+                    f"{evidence.confidence:.2f}\tlinked:{evidence.linked_at}\t"
+                    f"by:{evidence.linked_by}\n  candidate: "
+                    f"{evidence.candidate_text}"
+                )
+                for source in evidence.source_messages:
+                    print(f"  source {source.message_id}: {source.body}")
+        elif args.command == "memory-merge":
+            target_id = await merge_user_memories(
+                db, target_memory_id=args.target_memory_id,
+                merged_memory_ids=args.source_memory_ids, text=args.text,
+                memory_type=args.memory_type, confidence=args.confidence,
+                actor=args.actor,
+            )
+            print(f"Merged memories into canonical memory {target_id}")
+        elif args.command == "memory-consolidate-scan":
+            scan_bottle = await load_bottle(db, args.bottle_id)
+            created = await scan_consolidation_proposals(
+                db, profile=scan_bottle.llm, bot_id=args.bottle_id,
+                user_id=args.user_id, actor=args.actor,
+            )
+            print(f"Created {created} consolidation proposal(s)")
+        elif args.command == "consolidation-list":
+            status = None if args.status == "all" else args.status
+            for proposal in await list_consolidation_proposals(db, status=status):
+                print(
+                    f"{proposal.id}\t{proposal.status}\t{proposal.bottle_name}\t"
+                    f"{proposal.canonical_name}\t"
+                    f"{','.join(str(item) for item in proposal.memory_ids)}\n"
+                    f"  proposed {proposal.proposed_type} "
+                    f"[{proposal.proposed_confidence:.2f}]: "
+                    f"{proposal.proposed_text}\n"
+                    f"  reason: {proposal.rationale}"
+                )
+        elif args.command == "consolidation-accept":
+            target_id = await accept_consolidation_proposal(
+                db, proposal_id=args.proposal_id,
+                target_memory_id=args.target_memory_id, actor=args.actor,
+            )
+            print(
+                f"Accepted proposal {args.proposal_id}; canonical memory is "
+                f"{target_id}"
+            )
+        elif args.command == "consolidation-reject":
+            await reject_consolidation_proposal(
+                db, proposal_id=args.proposal_id, actor=args.actor,
+            )
+            print(f"Rejected proposal {args.proposal_id}")
         elif args.command == "logs-search":
             for result in await search_logs(
                 db, text=args.query, bot_id=args.bottle_id, network=args.network,
@@ -362,6 +433,12 @@ def main() -> None:
     sediment_reject = commands.add_parser("sediment-reject", help="reject a candidate")
     sediment_reject.add_argument("candidate_id", type=int)
     sediment_reject.add_argument("--actor", default="operator")
+    sediment_attach = commands.add_parser(
+        "sediment-attach", help="attach a candidate as evidence to an existing memory"
+    )
+    sediment_attach.add_argument("candidate_id", type=int)
+    sediment_attach.add_argument("memory_id", type=int)
+    sediment_attach.add_argument("--actor", default="operator")
     memories_parser = commands.add_parser("memories", help="list approved memories for a user")
     memories_parser.add_argument("bottle_id", type=int)
     memories_parser.add_argument("user_id")
@@ -371,6 +448,44 @@ def main() -> None:
     memory_edit.add_argument("--type", dest="memory_type", choices=MEMORY_TYPES)
     memory_edit.add_argument("--confidence", type=float)
     memory_edit.add_argument("--actor", default="operator")
+    memory_evidence = commands.add_parser(
+        "memory-evidence", help="show every candidate and message supporting a memory"
+    )
+    memory_evidence.add_argument("memory_id", type=int)
+    memory_merge = commands.add_parser(
+        "memory-merge", help="merge redundant memories without deleting provenance"
+    )
+    memory_merge.add_argument("target_memory_id", type=int)
+    memory_merge.add_argument("source_memory_ids", type=int, nargs="+")
+    memory_merge.add_argument("--text")
+    memory_merge.add_argument("--type", dest="memory_type", choices=MEMORY_TYPES)
+    memory_merge.add_argument("--confidence", type=float)
+    memory_merge.add_argument("--actor", default="operator")
+    consolidation_scan = commands.add_parser(
+        "memory-consolidate-scan",
+        help="ask a Bottle's LLM to propose redundant-memory groups for review",
+    )
+    consolidation_scan.add_argument("bottle_id", type=int)
+    consolidation_scan.add_argument("user_id")
+    consolidation_scan.add_argument("--actor", default="operator")
+    consolidation_list = commands.add_parser(
+        "consolidation-list", help="list operator-review consolidation proposals"
+    )
+    consolidation_list.add_argument(
+        "--status", choices=("pending", "accepted", "rejected", "all"),
+        default="pending",
+    )
+    consolidation_accept = commands.add_parser(
+        "consolidation-accept", help="accept a proposal and merge its evidence"
+    )
+    consolidation_accept.add_argument("proposal_id", type=int)
+    consolidation_accept.add_argument("--target", dest="target_memory_id", type=int)
+    consolidation_accept.add_argument("--actor", default="operator")
+    consolidation_reject = commands.add_parser(
+        "consolidation-reject", help="reject a proposal without changing memories"
+    )
+    consolidation_reject.add_argument("proposal_id", type=int)
+    consolidation_reject.add_argument("--actor", default="operator")
     logs_search = commands.add_parser("logs-search", help="search message logs with FTS5")
     logs_search.add_argument("query")
     logs_search.add_argument("--bottle", dest="bottle_id", type=int)

@@ -193,7 +193,7 @@ async def run_bottle_once(
             )
             memories = (
                 await approved_memory_texts(
-                    db, bot_id=bottle.id, user_id=user_id,
+                    db, bot_id=bottle.id, user_id=user_id, query_text=body,
                 )
                 if latest.identity_confidence >= 0.8 else []
             )

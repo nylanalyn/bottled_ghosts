@@ -67,11 +67,22 @@ Review sediment and inspect approved memories with:
 bottled-ghosts sediment-list
 bottled-ghosts sediment-approve 1 --actor aureate
 bottled-ghosts sediment-reject 2 --actor aureate
+bottled-ghosts sediment-attach CANDIDATE_ID MEMORY_ID --actor aureate
 bottled-ghosts memories BOTTLE_ID USER_UUID
+bottled-ghosts memory-evidence MEMORY_ID
 bottled-ghosts memory-edit 1 --text "Prefers mature cheese" --actor aureate
+bottled-ghosts memory-merge TARGET_ID SOURCE_ID... --actor aureate
+bottled-ghosts memory-consolidate-scan BOTTLE_ID USER_UUID --actor aureate
+bottled-ghosts consolidation-list
+bottled-ghosts consolidation-accept PROPOSAL_ID --actor aureate
 ```
 
-Approval, rejection, and edits are transactional and append an audit event.
+Exact repeated approvals automatically become additional evidence for the
+existing canonical memory. Similar wording is never merged automatically:
+the explicit consolidation scan creates persistent proposals for operator
+acceptance or rejection. Approval, rejection, evidence attachment, edits, and
+merges are transactional and append audit events. Merged memories remain as
+archived redirects, and every supporting candidate retains its source messages.
 Sediment and approved memories belong to the Bottle that extracted them; the
 dashboard displays that owner. Only that Bottle's approved memories are
 retrieved into its prompts. Search raw logs with:
@@ -213,11 +224,18 @@ The dashboard shows configured Bottles, memory extraction state, pending
 sediment, enabled modules, last activity, and recent messages. Use the arrow
 keys to select a Bottle, `F7` to explicitly start or stop it, `r` to refresh,
 and `q` to quit. Closing the TUI stops Bottles launched by that TUI.
-The Sediment tab shows candidate provenance. Press `a` to approve the selected
-candidate or `x` to reject it; both actions use the supplied audit identity.
-The Memories tab lists trusted memories and their source. Edit the selected
+The Sediment tab shows candidate provenance and likely existing memories from
+the same Bottle/user scope. Press `a` to approve the selected candidate, `x` to
+reject it, or enter a memory ID to attach it as further evidence; all actions
+use the supplied audit identity.
+The Memories tab lists trusted memories and every supporting candidate/source.
+Edit the selected
 memory's text, type, or confidence and press the save button or `Ctrl+S`; the
 change is written transactionally with the same audit identity.
+The Consolidation tab reviews persistent merge proposals. Acceptance moves all
+evidence to one canonical memory and archives the redundant rows; rejection
+records the decision without changing trusted memory. Proposal generation is
+only run by the explicit `memory-consolidate-scan` CLI command.
 The Modules tab exposes configuration for the Bottle selected on the dashboard:
 `F2` toggles inclusion in `run-all`, `F3` toggles sediment extraction, and `F4`
 toggles the selected registered module. Running processes are not started or

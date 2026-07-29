@@ -111,6 +111,11 @@ async def merge_users(db: aiosqlite.Connection, *, keep_id: str, merge_id: str) 
             "UPDATE memory_candidates SET user_id = ? WHERE user_id = ?", (keep_id, merge_id)
         )
         await db.execute("UPDATE user_memories SET user_id = ? WHERE user_id = ?", (keep_id, merge_id))
+        await db.execute(
+            """UPDATE memory_consolidation_proposals
+               SET user_id = ? WHERE user_id = ?""",
+            (keep_id, merge_id),
+        )
         await db.execute("DELETE FROM users WHERE id = ?", (merge_id,))
         await db.commit()
     except Exception:

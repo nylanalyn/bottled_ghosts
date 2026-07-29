@@ -300,7 +300,7 @@ Used for fast search.
 
 ### user_memories
 
-Approved long-term user memories.
+Canonical long-term beliefs owned by one Bottle's perspective.
 
 Fields:
 
@@ -310,8 +310,25 @@ Fields:
 * memory_text
 * memory_type
 * confidence
+* state
+* merged_into_id
 * created_at
 * last_used_at
+
+Active rows are trusted prompt context. Consolidation archives redundant rows
+as `merged` redirects; it does not delete their history.
+
+### user_memory_evidence
+
+Many-to-one links from approved sediment candidates to the canonical memory
+they support. Every link retains the candidate's complete ordered message
+provenance.
+
+### user_memories_fts
+
+Exact FTS5 index over canonical memory text. Runtime retrieval selects relevant
+active memories first, then stable relationship/identity context, then recent
+fallbacks, always within one Bottle and user.
 
 ### memory_candidates
 
@@ -347,7 +364,19 @@ Fields:
 
 ### audit_events
 
-Append-only history of sediment approval, rejection, and memory edits.
+Append-only history of sediment approval, rejection, evidence attachment,
+memory edits and merges, and consolidation proposal review.
+
+### memory_consolidation_proposals
+
+Persistent, operator-reviewed suggestions for redundant canonical memories.
+An explicit scan may ask the Bottle's configured LLM for proposals, but model
+output never mutates trusted memory. Only operator acceptance performs a
+transactional merge.
+
+### memory_consolidation_members
+
+Ordered memory membership for each consolidation proposal.
 
 ### configuration_events
 

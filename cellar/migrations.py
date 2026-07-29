@@ -673,6 +673,257 @@ async def migration_030(db: aiosqlite.Connection) -> None:
         raise RuntimeError("Bottle-scoped memory migration left foreign-key violations")
 
 
+async def migration_031(db: aiosqlite.Connection) -> None:
+    missing_sources = await (await db.execute(
+        """SELECT COUNT(*)
+           FROM user_memories um
+           LEFT JOIN memory_candidates c ON c.id = um.source_candidate_id
+           WHERE um.source_candidate_id IS NOT NULL AND c.id IS NULL"""
+    )).fetchone()
+    missing_count = int(missing_sources[0]) if missing_sources is not None else 0
+    if missing_count:
+        raise RuntimeError(
+            f"cannot create evidence for {missing_count} memories: "
+            "source candidate is missing"
+        )
+
+    await db.commit()
+    await db.execute("PRAGMA foreign_keys = OFF")
+    try:
+        await db.executescript(
+            """
+            BEGIN IMMEDIATE;
+
+            CREATE TABLE user_memories_new (
+                id INTEGER PRIMARY KEY,
+                bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                memory_text TEXT NOT NULL,
+                memory_type TEXT NOT NULL CHECK (
+                    memory_type IN (
+                        'preference', 'project', 'relationship', 'identity',
+                        'temporary_state'
+                    )
+                ),
+                confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+                state TEXT NOT NULL DEFAULT 'active' CHECK (
+                    state IN ('active', 'merged')
+                ),
+                merged_into_id INTEGER
+                    REFERENCES user_memories_new(id) ON DELETE RESTRICT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TEXT,
+                expires_at TEXT,
+                CHECK (
+                    (state = 'active' AND merged_into_id IS NULL)
+                    OR (state = 'merged' AND merged_into_id IS NOT NULL)
+                )
+            );
+            INSERT INTO user_memories_new(
+                id, bot_id, user_id, memory_text, memory_type, confidence,
+                state, merged_into_id, created_at, updated_at, last_used_at,
+                expires_at
+            )
+            SELECT id, bot_id, user_id, memory_text, memory_type, confidence,
+                   'active', NULL, created_at, updated_at, last_used_at, expires_at
+            FROM user_memories;
+
+            CREATE TABLE user_memory_evidence_new (
+                memory_id INTEGER NOT NULL
+                    REFERENCES user_memories_new(id) ON DELETE CASCADE,
+                candidate_id INTEGER NOT NULL UNIQUE
+                    REFERENCES memory_candidates(id) ON DELETE RESTRICT,
+                linked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                linked_by TEXT NOT NULL,
+                PRIMARY KEY (memory_id, candidate_id)
+            );
+            INSERT INTO user_memory_evidence_new(
+                memory_id, candidate_id, linked_at, linked_by
+            )
+            SELECT id, source_candidate_id, created_at, 'migration-031'
+            FROM user_memories
+            WHERE source_candidate_id IS NOT NULL;
+
+            DROP TABLE user_memories;
+            ALTER TABLE user_memories_new RENAME TO user_memories;
+            ALTER TABLE user_memory_evidence_new RENAME TO user_memory_evidence;
+
+            CREATE INDEX user_memories_user_idx
+                ON user_memories(bot_id, user_id, state, memory_type, id DESC);
+            CREATE INDEX user_memories_expiry_idx
+                ON user_memories(expires_at) WHERE expires_at IS NOT NULL;
+            CREATE INDEX user_memory_evidence_memory_idx
+                ON user_memory_evidence(memory_id, candidate_id);
+
+            CREATE TRIGGER user_memory_evidence_scope_insert
+            BEFORE INSERT ON user_memory_evidence BEGIN
+                SELECT CASE WHEN NOT EXISTS (
+                    SELECT 1
+                    FROM user_memories um
+                    JOIN memory_candidates c
+                      ON c.bot_id = um.bot_id AND c.user_id = um.user_id
+                    WHERE um.id = NEW.memory_id AND c.id = NEW.candidate_id
+                ) THEN RAISE(ABORT, 'memory evidence scope mismatch') END;
+            END;
+            CREATE TRIGGER user_memory_evidence_scope_update
+            BEFORE UPDATE ON user_memory_evidence BEGIN
+                SELECT CASE WHEN NOT EXISTS (
+                    SELECT 1
+                    FROM user_memories um
+                    JOIN memory_candidates c
+                      ON c.bot_id = um.bot_id AND c.user_id = um.user_id
+                    WHERE um.id = NEW.memory_id AND c.id = NEW.candidate_id
+                ) THEN RAISE(ABORT, 'memory evidence scope mismatch') END;
+            END;
+
+            CREATE VIRTUAL TABLE user_memories_fts USING fts5(
+                memory_text,
+                content='user_memories',
+                content_rowid='id'
+            );
+            INSERT INTO user_memories_fts(rowid, memory_text)
+                SELECT id, memory_text FROM user_memories;
+            CREATE TRIGGER user_memories_fts_insert
+            AFTER INSERT ON user_memories BEGIN
+                INSERT INTO user_memories_fts(rowid, memory_text)
+                    VALUES (new.id, new.memory_text);
+            END;
+            CREATE TRIGGER user_memories_fts_delete
+            AFTER DELETE ON user_memories BEGIN
+                INSERT INTO user_memories_fts(
+                    user_memories_fts, rowid, memory_text
+                ) VALUES ('delete', old.id, old.memory_text);
+            END;
+            CREATE TRIGGER user_memories_fts_update
+            AFTER UPDATE OF memory_text ON user_memories BEGIN
+                INSERT INTO user_memories_fts(
+                    user_memories_fts, rowid, memory_text
+                ) VALUES ('delete', old.id, old.memory_text);
+                INSERT INTO user_memories_fts(rowid, memory_text)
+                    VALUES (new.id, new.memory_text);
+            END;
+
+            CREATE TABLE memory_consolidation_proposals (
+                id INTEGER PRIMARY KEY,
+                bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                proposed_text TEXT NOT NULL,
+                proposed_type TEXT NOT NULL CHECK (
+                    proposed_type IN (
+                        'preference', 'project', 'relationship', 'identity',
+                        'temporary_state'
+                    )
+                ),
+                proposed_confidence REAL NOT NULL CHECK (
+                    proposed_confidence BETWEEN 0 AND 1
+                ),
+                rationale TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                    status IN ('pending', 'accepted', 'rejected')
+                ),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TEXT,
+                reviewed_by TEXT
+            );
+            CREATE INDEX memory_consolidation_review_idx
+                ON memory_consolidation_proposals(status, bot_id, user_id, id);
+            CREATE TABLE memory_consolidation_members (
+                proposal_id INTEGER NOT NULL
+                    REFERENCES memory_consolidation_proposals(id) ON DELETE CASCADE,
+                memory_id INTEGER NOT NULL
+                    REFERENCES user_memories(id) ON DELETE RESTRICT,
+                ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+                PRIMARY KEY (proposal_id, memory_id),
+                UNIQUE(proposal_id, ordinal)
+            );
+            CREATE TRIGGER memory_consolidation_member_scope_insert
+            BEFORE INSERT ON memory_consolidation_members BEGIN
+                SELECT CASE WHEN NOT EXISTS (
+                    SELECT 1
+                    FROM memory_consolidation_proposals p
+                    JOIN user_memories um
+                      ON um.bot_id = p.bot_id AND um.user_id = p.user_id
+                    WHERE p.id = NEW.proposal_id AND um.id = NEW.memory_id
+                ) THEN RAISE(ABORT, 'consolidation member scope mismatch') END;
+            END;
+            CREATE TRIGGER memory_consolidation_member_scope_update
+            BEFORE UPDATE ON memory_consolidation_members BEGIN
+                SELECT CASE WHEN NOT EXISTS (
+                    SELECT 1
+                    FROM memory_consolidation_proposals p
+                    JOIN user_memories um
+                      ON um.bot_id = p.bot_id AND um.user_id = p.user_id
+                    WHERE p.id = NEW.proposal_id AND um.id = NEW.memory_id
+                ) THEN RAISE(ABORT, 'consolidation member scope mismatch') END;
+            END;
+
+            CREATE TABLE audit_events_new (
+                id INTEGER PRIMARY KEY,
+                action TEXT NOT NULL CHECK (
+                    action IN (
+                        'approve', 'reject', 'edit', 'attach', 'merge', 'propose'
+                    )
+                ),
+                entity_type TEXT NOT NULL CHECK (
+                    entity_type IN (
+                        'memory_candidate', 'user_memory',
+                        'consolidation_proposal'
+                    )
+                ),
+                entity_id INTEGER NOT NULL,
+                related_entity_id INTEGER,
+                actor TEXT NOT NULL,
+                old_text TEXT,
+                new_text TEXT,
+                old_type TEXT,
+                new_type TEXT,
+                old_confidence REAL,
+                new_confidence REAL,
+                old_status TEXT,
+                new_status TEXT,
+                old_expires_at TEXT,
+                new_expires_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO audit_events_new(
+                id, action, entity_type, entity_id, related_entity_id, actor,
+                old_text, new_text, old_type, new_type, old_confidence,
+                new_confidence, old_status, new_status, old_expires_at,
+                new_expires_at, created_at
+            )
+            SELECT id, action, entity_type, entity_id, related_entity_id, actor,
+                   old_text, new_text, old_type, new_type, old_confidence,
+                   new_confidence, old_status, new_status, old_expires_at,
+                   new_expires_at, created_at
+            FROM audit_events;
+            DROP TABLE audit_events;
+            ALTER TABLE audit_events_new RENAME TO audit_events;
+            CREATE INDEX audit_events_entity_idx
+                ON audit_events(entity_type, entity_id, id DESC);
+            CREATE TRIGGER audit_events_no_update
+            BEFORE UPDATE ON audit_events BEGIN
+                SELECT RAISE(ABORT, 'audit events are append-only');
+            END;
+            CREATE TRIGGER audit_events_no_delete
+            BEFORE DELETE ON audit_events BEGIN
+                SELECT RAISE(ABORT, 'audit events are append-only');
+            END;
+
+            COMMIT;
+            """
+        )
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.execute("PRAGMA foreign_keys = ON")
+
+    violations = await (await db.execute("PRAGMA foreign_key_check")).fetchall()
+    if violations:
+        raise RuntimeError("canonical-memory migration left foreign-key violations")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -692,6 +943,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_028,
     migration_029,
     migration_030,
+    migration_031,
 )
 
 

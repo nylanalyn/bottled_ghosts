@@ -27,12 +27,21 @@ from textual.widgets import (
 
 from cellar.memory_store import (
     approve_memory_candidate,
+    attach_memory_candidate,
     edit_user_memory,
     get_memory_candidate,
     get_user_memory,
     list_all_user_memories,
+    list_memory_evidence,
     list_memory_candidates,
     reject_memory_candidate,
+    suggest_memories_for_candidate,
+)
+from cellar.memory_consolidation import (
+    accept_consolidation_proposal,
+    get_consolidation_proposal,
+    list_consolidation_proposals,
+    reject_consolidation_proposal,
 )
 from cellar.alias_store import ALIAS_PATTERN, add_alias, delete_alias, list_aliases
 from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
@@ -71,10 +80,20 @@ class BottledGhostsApp(App[None]):
     #logs { height: 1fr; border: solid $secondary; }
     #sediment { height: 55%; border: solid $accent; }
     #candidate-detail { height: 1fr; border: solid $secondary; padding: 1 2; }
+    #candidate-memory-target { margin: 0 1; }
+    #attach-candidate { margin: 1; width: 28; }
     #memories { height: 45%; border: solid $accent; }
-    #memory-detail { height: 5; border: solid $secondary; padding: 1 2; }
+    #memory-detail {
+        height: 1fr;
+        overflow-y: auto;
+        border: solid $secondary;
+        padding: 1 2;
+    }
     .memory-field { margin: 0 1; }
     #save-memory { margin: 1; width: 20; }
+    #consolidation-list { height: 45%; border: solid $accent; }
+    #consolidation-detail { height: 1fr; border: solid $secondary; padding: 1 2; }
+    #accept-consolidation, #reject-consolidation { margin: 1; width: 24; }
     #module-title { height: 2; padding: 0 1; background: $panel; }
     #module-list { height: 1fr; border: solid $accent; }
     #module-settings { margin: 1; }
@@ -115,6 +134,7 @@ class BottledGhostsApp(App[None]):
         self.db: aiosqlite.Connection | None = None
         self.selected_candidate_id: int | None = None
         self.selected_memory_id: int | None = None
+        self.selected_consolidation_id: int | None = None
         self.selected_bottle_id: int | None = None
         self.selected_module_name: str | None = None
         self.selected_ignore_rule_id: int | None = None
@@ -134,6 +154,12 @@ class BottledGhostsApp(App[None]):
             with TabPane("Sediment", id="sediment-tab"):
                 yield DataTable(id="sediment")
                 yield Static("Select a candidate to inspect its source.", id="candidate-detail")
+                yield Input(
+                    placeholder="Existing memory ID for this evidence",
+                    type="integer",
+                    id="candidate-memory-target",
+                )
+                yield Button("Attach as evidence", id="attach-candidate")
             with TabPane("Memories", id="memories-tab"):
                 yield DataTable(id="memories")
                 yield Static("Select an approved memory to inspect it.", id="memory-detail")
@@ -148,6 +174,22 @@ class BottledGhostsApp(App[None]):
                 yield Input(placeholder="Confidence (0–1)", type="number",
                             id="memory-confidence", classes="memory-field")
                 yield Button("Save audited edit", id="save-memory", variant="primary")
+            with TabPane("Consolidation", id="consolidation-tab"):
+                yield DataTable(id="consolidation-list")
+                yield Static(
+                    "No pending consolidation proposals.",
+                    id="consolidation-detail",
+                )
+                yield Button(
+                    "Accept selected proposal",
+                    id="accept-consolidation",
+                    variant="success",
+                )
+                yield Button(
+                    "Reject selected proposal",
+                    id="reject-consolidation",
+                    variant="error",
+                )
             with TabPane("Modules", id="modules-tab"):
                 yield Static("Select a Bottle on the Bottles tab.", id="module-title")
                 yield DataTable(id="module-list")
@@ -239,7 +281,14 @@ class BottledGhostsApp(App[None]):
         memory_table.cursor_type = "row"
         memory_table.zebra_stripes = True
         memory_table.add_columns(
-            "ID", "Bottle", "User", "Type", "Confidence", "Expires", "Memory",
+            "ID", "Bottle", "User", "Type", "Confidence", "Evidence", "Expires",
+            "Memory",
+        )
+        consolidation_table = self.query_one("#consolidation-list", DataTable)
+        consolidation_table.cursor_type = "row"
+        consolidation_table.zebra_stripes = True
+        consolidation_table.add_columns(
+            "ID", "Bottle", "User", "Members", "Type", "Confidence", "Proposal",
         )
         module_table = self.query_one("#module-list", DataTable)
         module_table.cursor_type = "row"
@@ -278,6 +327,7 @@ class BottledGhostsApp(App[None]):
         await self.refresh_dashboard()
         await self.refresh_sediment()
         await self.refresh_memories()
+        await self.refresh_consolidations()
         await self.refresh_modules()
         await self.refresh_configuration()
         await self.refresh_audit()
@@ -323,6 +373,10 @@ class BottledGhostsApp(App[None]):
             row_id = int(str(event.row_key.value))
             self.selected_memory_id = row_id
             await self.show_memory(row_id)
+        elif event.data_table.id == "consolidation-list":
+            row_id = int(str(event.row_key.value))
+            self.selected_consolidation_id = row_id
+            await self.show_consolidation(row_id)
         elif event.data_table.id == "module-list":
             self.selected_module_name = str(event.row_key.value)
             await self.show_module_settings()
@@ -377,12 +431,22 @@ class BottledGhostsApp(App[None]):
             f"Message {source.message_id}: {source.body}"
             for source in candidate.source_messages
         )
+        suggestions = await suggest_memories_for_candidate(
+            self.db, candidate_id=candidate_id,
+        )
+        suggestion_text = "\n".join(
+            f"  {suggestion.id} [{suggestion.memory_type}, "
+            f"{suggestion.evidence_count} evidence]: {suggestion.memory_text}"
+            for suggestion in suggestions
+        ) or "  No likely existing memories."
         self.query_one("#candidate-detail", Static).update(Text(
             f"Candidate {candidate.id} owned by {candidate.bottle_name} "
             f"(Bottle {candidate.bot_id})\n"
             f"About {candidate.canonical_name} ({candidate.user_id})\n\n"
             f"Proposed {candidate.memory_type} [{candidate.confidence:.2f}]:\n"
-            f"{candidate.candidate_text}\n\nSource messages:\n{sources}"
+            f"{candidate.candidate_text}\n\nSource messages:\n{sources}\n\n"
+            f"Possible existing memories (same Bottle and user only):\n"
+            f"{suggestion_text}"
         ))
 
     async def action_approve_candidate(self) -> None:
@@ -427,7 +491,8 @@ class BottledGhostsApp(App[None]):
             table.add_row(
                 str(memory.id), memory.bottle_name, memory.canonical_name,
                 memory.memory_type, f"{memory.confidence:.2f}",
-                memory.expires_at or "never", memory.memory_text,
+                str(memory.evidence_count), memory.expires_at or "never",
+                memory.memory_text,
                 key=str(memory.id),
             )
         self.selected_memory_id = memories[0].id if memories else None
@@ -443,12 +508,21 @@ class BottledGhostsApp(App[None]):
         memory = await get_user_memory(self.db, memory_id=memory_id)
         if memory is None:
             return
-        source = memory.source_body or "No source message available."
+        evidence = await list_memory_evidence(self.db, memory_id=memory_id)
+        evidence_text = "\n".join(
+            f"Candidate {item.candidate_id} ({item.linked_by}): "
+            f"{item.candidate_text} — "
+            + "; ".join(
+                f"message {source.message_id}: {source.body}"
+                for source in item.source_messages
+            )
+            for item in evidence
+        ) or "No evidence is attached."
         self.query_one("#memory-detail", Static).update(Text(
             f"Memory {memory.id} owned by {memory.bottle_name} (Bottle {memory.bot_id})\n"
             f"About {memory.canonical_name} ({memory.user_id})\n"
             f"Expires: {memory.expires_at or 'never'}\n"
-            f"Source candidate: {memory.source_candidate_id or 'none'} — {source}"
+            f"Evidence ({memory.evidence_count}):\n{evidence_text}"
         ))
         self.query_one("#memory-text", Input).value = memory.memory_text
         self.query_one("#memory-type", Select).value = memory.memory_type
@@ -458,6 +532,12 @@ class BottledGhostsApp(App[None]):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save-memory":
             await self.action_save_memory()
+        elif event.button.id == "attach-candidate":
+            await self.action_attach_candidate()
+        elif event.button.id == "accept-consolidation":
+            await self.action_accept_consolidation()
+        elif event.button.id == "reject-consolidation":
+            await self.action_reject_consolidation()
         elif event.button.id == "run-log-search":
             await self.action_search_logs()
         elif event.button.id == "save-configuration":
@@ -494,6 +574,103 @@ class BottledGhostsApp(App[None]):
         self.notify(f"Updated memory {self.selected_memory_id}")
         await self.refresh_memories()
         await self.refresh_audit()
+
+    async def action_attach_candidate(self) -> None:
+        if self.db is None or self.selected_candidate_id is None:
+            self.notify("No pending candidate selected", severity="warning")
+            return
+        raw_target = self.query_one("#candidate-memory-target", Input).value.strip()
+        try:
+            target_id = int(raw_target)
+            await attach_memory_candidate(
+                self.db, candidate_id=self.selected_candidate_id,
+                memory_id=target_id, actor=self.actor,
+            )
+        except (LookupError, ValueError) as error:
+            self.notify(str(error), severity="error")
+            return
+        self.notify(
+            f"Attached candidate {self.selected_candidate_id} to memory {target_id}"
+        )
+        self.query_one("#candidate-memory-target", Input).value = ""
+        await self.refresh_all()
+
+    async def refresh_consolidations(self) -> None:
+        if self.db is None:
+            return
+        table = self.query_one("#consolidation-list", DataTable)
+        table.clear()
+        proposals = await list_consolidation_proposals(self.db)
+        for proposal in proposals:
+            table.add_row(
+                str(proposal.id), proposal.bottle_name, proposal.canonical_name,
+                ", ".join(str(memory_id) for memory_id in proposal.memory_ids),
+                proposal.proposed_type, f"{proposal.proposed_confidence:.2f}",
+                proposal.proposed_text, key=str(proposal.id),
+            )
+        self.selected_consolidation_id = proposals[0].id if proposals else None
+        if proposals:
+            await self.show_consolidation(proposals[0].id)
+        else:
+            self.query_one("#consolidation-detail", Static).update(
+                "No pending consolidation proposals. Run the explicit "
+                "memory-consolidate-scan command for a Bottle and user."
+            )
+
+    async def show_consolidation(self, proposal_id: int) -> None:
+        if self.db is None:
+            return
+        proposal = await get_consolidation_proposal(
+            self.db, proposal_id=proposal_id,
+        )
+        if proposal is None:
+            return
+        members = "\n".join(
+            f"  {memory_id}: {memory_text}"
+            for memory_id, memory_text in zip(
+                proposal.memory_ids, proposal.memory_texts, strict=True,
+            )
+        )
+        self.query_one("#consolidation-detail", Static).update(Text(
+            f"Proposal {proposal.id} for {proposal.bottle_name} "
+            f"(Bottle {proposal.bot_id}) about {proposal.canonical_name}\n\n"
+            f"Existing memories:\n{members}\n\n"
+            f"Proposed {proposal.proposed_type} "
+            f"[{proposal.proposed_confidence:.2f}]:\n"
+            f"{proposal.proposed_text}\n\nReason: {proposal.rationale}"
+        ))
+
+    async def action_accept_consolidation(self) -> None:
+        if self.db is None or self.selected_consolidation_id is None:
+            self.notify("No consolidation proposal selected", severity="warning")
+            return
+        proposal_id = self.selected_consolidation_id
+        try:
+            target_id = await accept_consolidation_proposal(
+                self.db, proposal_id=proposal_id, actor=self.actor,
+            )
+        except (LookupError, ValueError) as error:
+            self.notify(str(error), severity="error")
+            await self.refresh_all()
+            return
+        self.notify(f"Accepted proposal {proposal_id}; canonical memory is {target_id}")
+        await self.refresh_all()
+
+    async def action_reject_consolidation(self) -> None:
+        if self.db is None or self.selected_consolidation_id is None:
+            self.notify("No consolidation proposal selected", severity="warning")
+            return
+        proposal_id = self.selected_consolidation_id
+        try:
+            await reject_consolidation_proposal(
+                self.db, proposal_id=proposal_id, actor=self.actor,
+            )
+        except (LookupError, ValueError) as error:
+            self.notify(str(error), severity="error")
+            await self.refresh_all()
+            return
+        self.notify(f"Rejected proposal {proposal_id}")
+        await self.refresh_all()
 
     async def refresh_modules(self) -> None:
         async with self._module_refresh_lock:

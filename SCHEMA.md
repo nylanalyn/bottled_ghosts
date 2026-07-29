@@ -50,9 +50,9 @@ Stores per-Bottle exact IRC identity rules. Columns: `id INTEGER PRIMARY KEY`, `
 
 ## memory_candidates
 
-Stores unreviewed sediment proposed by the extractor. Columns: `id INTEGER PRIMARY KEY`, `user_id TEXT NOT NULL`, `source_message_id INTEGER NOT NULL`, `candidate_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `status TEXT NOT NULL DEFAULT 'pending'`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `reviewed_at TEXT`.
+Stores unreviewed sediment proposed by one Bottle's extractor. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `user_id TEXT NOT NULL`, `source_message_id INTEGER NOT NULL`, `candidate_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `status TEXT NOT NULL DEFAULT 'pending'`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `reviewed_at TEXT`.
 
-Foreign keys: `user_id` references `users(id)` with cascading deletion; `source_message_id` references `messages(id)` with cascading deletion. A unique constraint on `(user_id, source_message_id, candidate_text)` prevents duplicate extraction. Indexes: `memory_candidates_review_idx(status, created_at, id)` supports the review queue; `memory_candidates_user_idx(user_id, status, id DESC)` supports per-user inspection.
+Foreign keys: `bot_id` references `bots(id)` with cascading deletion; `user_id` references `users(id)` with cascading deletion; `source_message_id` references `messages(id)` with cascading deletion. A unique constraint on `(bot_id, user_id, source_message_id, candidate_text)` prevents duplicate extraction within a Bottle's perspective. Indexes: `memory_candidates_review_idx(status, created_at, id)` supports the review queue; `memory_candidates_user_idx(bot_id, user_id, status, id DESC)` supports per-Bottle, per-user inspection.
 
 Allowed `memory_type` values are `preference`, `project`, `relationship`, `identity`, and `temporary_state`. Allowed statuses are `pending`, `approved`, and `rejected`.
 
@@ -62,9 +62,9 @@ Stores the complete ordered message provenance used to extract a memory candidat
 
 ## user_memories
 
-Stores operator-approved long-term memory. Columns: `id INTEGER PRIMARY KEY`, `user_id TEXT NOT NULL`, `source_candidate_id INTEGER UNIQUE`, `memory_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_used_at TEXT`, `expires_at TEXT`.
+Stores operator-approved long-term memory belonging to one Bottle's perspective. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `user_id TEXT NOT NULL`, `source_candidate_id INTEGER UNIQUE`, `memory_text TEXT NOT NULL`, `memory_type TEXT NOT NULL`, `confidence REAL NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_used_at TEXT`, `expires_at TEXT`.
 
-Foreign keys: `user_id` references `users(id)` with cascading deletion; `source_candidate_id` references `memory_candidates(id)` with deletion setting it to null. Indexes: `user_memories_user_idx(user_id, memory_type, id DESC)` and partial `user_memories_expiry_idx(expires_at)`. Memory types use the same five-value constraint as sediment. Expired rows remain available for inspection but are excluded from prompt retrieval.
+Foreign keys: `bot_id` references `bots(id)` with cascading deletion; `user_id` references `users(id)` with cascading deletion; `source_candidate_id` references `memory_candidates(id)` with deletion setting it to null. Indexes: `user_memories_user_idx(bot_id, user_id, memory_type, id DESC)` and partial `user_memories_expiry_idx(expires_at)`. Memory types use the same five-value constraint as sediment. Expired rows remain available for inspection but are excluded from prompt retrieval. Runtime retrieval always requires both `bot_id` and `user_id`, so one Bottle never receives another Bottle's memories.
 
 ## audit_events
 
@@ -167,3 +167,4 @@ Stores runtime-enforced, temporary mood breaks per Bottle and IRC channel. Colum
 - 027: Add persistent, audited per-Bottle away status for the Discord admin bridge.
 - 028: Add persisted, independently paced utility-bot event reactions to the optional ambient-chat module.
 - 029: Add persistent, runtime-enforced mood room breaks and scheduled baseline reset metadata.
+- 030: Scope sediment and approved memories to their owning Bottle, backfilling ownership from source-message provenance.

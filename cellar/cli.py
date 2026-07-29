@@ -175,7 +175,8 @@ async def async_main(args: argparse.Namespace) -> None:
                     for source in candidate.source_messages
                 )
                 print(f"{candidate.id}\t{candidate.status}\t{candidate.memory_type}\t"
-                      f"{candidate.confidence:.2f}\t{candidate.canonical_name}\t"
+                      f"{candidate.confidence:.2f}\t{candidate.bottle_name}\t"
+                      f"{candidate.canonical_name}\t"
                       f"{candidate.user_id}\n  candidate: {candidate.candidate_text}\n"
                       f"{sources}")
         elif args.command == "sediment-approve":
@@ -189,7 +190,9 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"Rejected candidate {args.candidate_id}")
         elif args.command == "memories":
-            for user_memory in await list_user_memories(db, user_id=args.user_id):
+            for user_memory in await list_user_memories(
+                db, bot_id=args.bottle_id, user_id=args.user_id,
+            ):
                 expiry = f"\texpires:{user_memory.expires_at}" if user_memory.expires_at else ""
                 print(f"{user_memory.id}\t{user_memory.memory_type}\t"
                       f"{user_memory.confidence:.2f}{expiry}\t{user_memory.memory_text}")
@@ -360,6 +363,7 @@ def main() -> None:
     sediment_reject.add_argument("candidate_id", type=int)
     sediment_reject.add_argument("--actor", default="operator")
     memories_parser = commands.add_parser("memories", help="list approved memories for a user")
+    memories_parser.add_argument("bottle_id", type=int)
     memories_parser.add_argument("user_id")
     memory_edit = commands.add_parser("memory-edit", help="edit an approved memory")
     memory_edit.add_argument("memory_id", type=int)

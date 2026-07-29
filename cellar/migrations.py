@@ -564,6 +564,115 @@ async def migration_029(db: aiosqlite.Connection) -> None:
         """
     )
 
+
+async def migration_030(db: aiosqlite.Connection) -> None:
+    unscoped = await (await db.execute(
+        """SELECT COUNT(*)
+           FROM user_memories um
+           LEFT JOIN memory_candidates c ON c.id = um.source_candidate_id
+           LEFT JOIN messages m ON m.id = c.source_message_id
+           WHERE c.id IS NULL OR m.id IS NULL"""
+    )).fetchone()
+    unscoped_count = int(unscoped[0]) if unscoped is not None else 0
+    if unscoped_count:
+        raise RuntimeError(
+            f"cannot assign {unscoped_count} existing memories to a Bottle: "
+            "source provenance is missing"
+        )
+
+    await db.commit()
+    await db.execute("PRAGMA foreign_keys = OFF")
+    try:
+        await db.executescript(
+            """
+            BEGIN IMMEDIATE;
+
+            CREATE TABLE memory_candidates_new (
+                id INTEGER PRIMARY KEY,
+                bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                source_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                candidate_text TEXT NOT NULL,
+                memory_type TEXT NOT NULL CHECK (
+                    memory_type IN (
+                        'preference', 'project', 'relationship', 'identity',
+                        'temporary_state'
+                    )
+                ),
+                confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+                status TEXT NOT NULL DEFAULT 'pending' CHECK (
+                    status IN ('pending', 'approved', 'rejected')
+                ),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TEXT,
+                UNIQUE(bot_id, user_id, source_message_id, candidate_text)
+            );
+            INSERT INTO memory_candidates_new(
+                id, bot_id, user_id, source_message_id, candidate_text,
+                memory_type, confidence, status, created_at, reviewed_at
+            )
+            SELECT c.id, m.bot_id, c.user_id, c.source_message_id, c.candidate_text,
+                   c.memory_type, c.confidence, c.status, c.created_at, c.reviewed_at
+            FROM memory_candidates c
+            JOIN messages m ON m.id = c.source_message_id;
+
+            CREATE TABLE user_memories_new (
+                id INTEGER PRIMARY KEY,
+                bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                source_candidate_id INTEGER UNIQUE
+                    REFERENCES memory_candidates_new(id) ON DELETE SET NULL,
+                memory_text TEXT NOT NULL,
+                memory_type TEXT NOT NULL CHECK (
+                    memory_type IN (
+                        'preference', 'project', 'relationship', 'identity',
+                        'temporary_state'
+                    )
+                ),
+                confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TEXT,
+                expires_at TEXT
+            );
+            INSERT INTO user_memories_new(
+                id, bot_id, user_id, source_candidate_id, memory_text, memory_type,
+                confidence, created_at, updated_at, last_used_at, expires_at
+            )
+            SELECT um.id, c.bot_id, um.user_id, um.source_candidate_id, um.memory_text,
+                   um.memory_type, um.confidence, um.created_at, um.updated_at,
+                   um.last_used_at, um.expires_at
+            FROM user_memories um
+            JOIN memory_candidates_new c ON c.id = um.source_candidate_id;
+
+            DROP TABLE user_memories;
+            DROP TABLE memory_candidates;
+            ALTER TABLE memory_candidates_new RENAME TO memory_candidates;
+            ALTER TABLE user_memories_new RENAME TO user_memories;
+
+            CREATE INDEX memory_candidates_review_idx
+                ON memory_candidates(status, created_at, id);
+            CREATE INDEX memory_candidates_user_idx
+                ON memory_candidates(bot_id, user_id, status, id DESC);
+            CREATE INDEX user_memories_user_idx
+                ON user_memories(bot_id, user_id, memory_type, id DESC);
+            CREATE INDEX user_memories_expiry_idx
+                ON user_memories(expires_at) WHERE expires_at IS NOT NULL;
+
+            COMMIT;
+            """
+        )
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.execute("PRAGMA foreign_keys = ON")
+
+    violations = await (await db.execute("PRAGMA foreign_key_check")).fetchall()
+    if violations:
+        raise RuntimeError("Bottle-scoped memory migration left foreign-key violations")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -582,6 +691,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_027,
     migration_028,
     migration_029,
+    migration_030,
 )
 
 

@@ -65,12 +65,14 @@ Review sediment and inspect approved memories with:
 bottled-ghosts sediment-list
 bottled-ghosts sediment-approve 1 --actor aureate
 bottled-ghosts sediment-reject 2 --actor aureate
-bottled-ghosts memories USER_UUID
+bottled-ghosts memories BOTTLE_ID USER_UUID
 bottled-ghosts memory-edit 1 --text "Prefers mature cheese" --actor aureate
 ```
 
 Approval, rejection, and edits are transactional and append an audit event.
-Only approved memories are retrieved into prompts. Search raw logs with:
+Sediment and approved memories belong to the Bottle that extracted them; the
+dashboard displays that owner. Only that Bottle's approved memories are
+retrieved into its prompts. Search raw logs with:
 
 ```bash
 bottled-ghosts logs-search "brass telescope" --bottle 1 --channel '#fractalsignal'

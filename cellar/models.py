@@ -153,6 +153,8 @@ class MemorySource(BaseModel):
 
 class MemoryCandidateView(BaseModel):
     id: int
+    bot_id: int
+    bottle_name: str
     user_id: str
     canonical_name: str
     source_message_id: int
@@ -166,6 +168,7 @@ class MemoryCandidateView(BaseModel):
 
 class UserMemory(BaseModel):
     id: int
+    bot_id: int
     user_id: str
     memory_text: str
     memory_type: MemoryType
@@ -174,6 +177,7 @@ class UserMemory(BaseModel):
 
 
 class UserMemoryView(UserMemory):
+    bottle_name: str
     canonical_name: str
     source_candidate_id: int | None
     source_body: str | None

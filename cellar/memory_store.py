@@ -15,26 +15,42 @@ TEMPORARY_MEMORY_HOURS = 24
 
 
 async def store_memory_candidates(
-    db: aiosqlite.Connection, *, user_id: str, source_message_ids: list[int],
-    candidates: list[ExtractedMemory],
+    db: aiosqlite.Connection, *, bot_id: int, user_id: str,
+    source_message_ids: list[int], candidates: list[ExtractedMemory],
 ) -> int:
     if not source_message_ids:
         raise ValueError("memory candidates require at least one source message")
+    unique_source_ids = tuple(dict.fromkeys(source_message_ids))
+    placeholders = ", ".join("?" for _ in unique_source_ids)
+    source_rows = list(await (await db.execute(
+        f"SELECT id, bot_id FROM messages WHERE id IN ({placeholders})",
+        unique_source_ids,
+    )).fetchall())
+    if (
+        len(source_rows) != len(unique_source_ids)
+        or any(row["bot_id"] != bot_id for row in source_rows)
+    ):
+        raise ValueError("memory candidate sources must belong to the owning Bottle")
     source_message_id = source_message_ids[-1]
     inserted = 0
     try:
         for candidate in candidates:
             cursor = await db.execute(
                 """INSERT OR IGNORE INTO memory_candidates(
-                       user_id, source_message_id, candidate_text, memory_type, confidence
-                   ) VALUES (?, ?, ?, ?, ?)""",
-                (user_id, source_message_id, candidate.text, candidate.type, candidate.confidence),
+                       bot_id, user_id, source_message_id, candidate_text,
+                       memory_type, confidence
+                   ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    bot_id, user_id, source_message_id, candidate.text,
+                    candidate.type, candidate.confidence,
+                ),
             )
             inserted += max(cursor.rowcount, 0)
             candidate_row = await (await db.execute(
                 """SELECT id FROM memory_candidates
-                   WHERE user_id = ? AND source_message_id = ? AND candidate_text = ?""",
-                (user_id, source_message_id, candidate.text),
+                   WHERE bot_id = ? AND user_id = ? AND source_message_id = ?
+                     AND candidate_text = ?""",
+                (bot_id, user_id, source_message_id, candidate.text),
             )).fetchone()
             if candidate_row is None:
                 raise RuntimeError("stored memory candidate could not be reloaded")
@@ -56,7 +72,7 @@ async def list_memory_candidates(
     db: aiosqlite.Connection, *, status: str = "pending"
 ) -> list[MemoryCandidateView]:
     cursor = await db.execute(
-        """SELECT c.*, u.canonical_name, m.body AS source_body,
+        """SELECT c.*, b.name AS bottle_name, u.canonical_name, m.body AS source_body,
                   (SELECT json_group_array(json_object(
                        'message_id', sources.message_id, 'body', sources.body
                    )) FROM (
@@ -66,6 +82,7 @@ async def list_memory_candidates(
                        WHERE cs.candidate_id = c.id ORDER BY cs.ordinal
                    ) AS sources) AS source_messages_json
            FROM memory_candidates c
+           JOIN bots b ON b.id = c.bot_id
            JOIN users u ON u.id = c.user_id
            JOIN messages m ON m.id = c.source_message_id
            WHERE c.status = ? ORDER BY c.created_at, c.id""", (status,),
@@ -80,7 +97,7 @@ async def get_memory_candidate(
     db: aiosqlite.Connection, *, candidate_id: int
 ) -> MemoryCandidateView | None:
     cursor = await db.execute(
-        """SELECT c.*, u.canonical_name, m.body AS source_body,
+        """SELECT c.*, b.name AS bottle_name, u.canonical_name, m.body AS source_body,
                   (SELECT json_group_array(json_object(
                        'message_id', sources.message_id, 'body', sources.body
                    )) FROM (
@@ -90,6 +107,7 @@ async def get_memory_candidate(
                        WHERE cs.candidate_id = c.id ORDER BY cs.ordinal
                    ) AS sources) AS source_messages_json
            FROM memory_candidates c
+           JOIN bots b ON b.id = c.bot_id
            JOIN users u ON u.id = c.user_id
            JOIN messages m ON m.id = c.source_message_id
            WHERE c.id = ?""", (candidate_id,),
@@ -113,13 +131,15 @@ async def approve_memory_candidate(
             raise ValueError(f"memory candidate {candidate_id} is already {row['status']}")
         cursor = await db.execute(
             """INSERT INTO user_memories(
-                   user_id, source_candidate_id, memory_text, memory_type, confidence,
-                   expires_at
-               ) VALUES (?, ?, ?, ?, ?,
+                   bot_id, user_id, source_candidate_id, memory_text, memory_type,
+                   confidence, expires_at
+               ) VALUES (?, ?, ?, ?, ?, ?,
                    CASE WHEN ? = 'temporary_state' THEN datetime('now', '+24 hours') END
                )""",
-            (row["user_id"], candidate_id, row["candidate_text"], row["memory_type"],
-             row["confidence"], row["memory_type"]),
+            (
+                row["bot_id"], row["user_id"], candidate_id, row["candidate_text"],
+                row["memory_type"], row["confidence"], row["memory_type"],
+            ),
         )
         memory_id = cursor.lastrowid
         if memory_id is None:
@@ -177,11 +197,12 @@ async def reject_memory_candidate(
 
 
 async def list_user_memories(
-    db: aiosqlite.Connection, *, user_id: str
+    db: aiosqlite.Connection, *, bot_id: int, user_id: str
 ) -> list[UserMemory]:
     cursor = await db.execute(
-        """SELECT id, user_id, memory_text, memory_type, confidence, expires_at
-           FROM user_memories WHERE user_id = ? ORDER BY id""", (user_id,),
+        """SELECT id, bot_id, user_id, memory_text, memory_type, confidence, expires_at
+           FROM user_memories WHERE bot_id = ? AND user_id = ? ORDER BY id""",
+        (bot_id, user_id),
     )
     return [UserMemory(**dict(row)) for row in await cursor.fetchall()]
 
@@ -193,15 +214,17 @@ async def list_all_user_memories(
         "WHERE um.expires_at IS NULL OR um.expires_at > CURRENT_TIMESTAMP"
     )
     cursor = await db.execute(
-        f"""SELECT um.id, um.user_id, u.canonical_name, um.source_candidate_id,
+        f"""SELECT um.id, um.bot_id, b.name AS bottle_name, um.user_id,
+                  u.canonical_name, um.source_candidate_id,
                   m.body AS source_body, um.memory_text, um.memory_type, um.confidence
                   , um.expires_at
            FROM user_memories um
+           JOIN bots b ON b.id = um.bot_id
            JOIN users u ON u.id = um.user_id
            LEFT JOIN memory_candidates c ON c.id = um.source_candidate_id
            LEFT JOIN messages m ON m.id = c.source_message_id
            {expiry_filter}
-           ORDER BY u.canonical_name COLLATE NOCASE, um.id"""
+           ORDER BY b.name COLLATE NOCASE, u.canonical_name COLLATE NOCASE, um.id"""
     )
     return [UserMemoryView(**dict(row)) for row in await cursor.fetchall()]
 
@@ -210,10 +233,12 @@ async def get_user_memory(
     db: aiosqlite.Connection, *, memory_id: int
 ) -> UserMemoryView | None:
     cursor = await db.execute(
-        """SELECT um.id, um.user_id, u.canonical_name, um.source_candidate_id,
+        """SELECT um.id, um.bot_id, b.name AS bottle_name, um.user_id,
+                  u.canonical_name, um.source_candidate_id,
                   m.body AS source_body, um.memory_text, um.memory_type, um.confidence
                   , um.expires_at
            FROM user_memories um
+           JOIN bots b ON b.id = um.bot_id
            JOIN users u ON u.id = um.user_id
            LEFT JOIN memory_candidates c ON c.id = um.source_candidate_id
            LEFT JOIN messages m ON m.id = c.source_message_id
@@ -272,12 +297,13 @@ async def edit_user_memory(
 
 
 async def approved_memory_texts(
-    db: aiosqlite.Connection, *, user_id: str, limit: int = 10
+    db: aiosqlite.Connection, *, bot_id: int, user_id: str, limit: int = 10
 ) -> list[str]:
     cursor = await db.execute(
         """SELECT memory_type, memory_text FROM user_memories
-           WHERE user_id = ? AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-           ORDER BY id DESC LIMIT ?""", (user_id, limit),
+           WHERE bot_id = ? AND user_id = ?
+             AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+           ORDER BY id DESC LIMIT ?""", (bot_id, user_id, limit),
     )
     return [f"{row['memory_type']}: {row['memory_text']}" for row in await cursor.fetchall()]
 

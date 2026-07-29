@@ -305,6 +305,7 @@ Approved long-term user memories.
 Fields:
 
 * id
+* bot_id
 * user_id
 * memory_text
 * memory_type
@@ -319,6 +320,7 @@ Pending memories.
 Fields:
 
 * id
+* bot_id
 * user_id
 * source_message_id
 * candidate_text

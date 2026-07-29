@@ -68,10 +68,11 @@ async def test_due_room_break_resets_defaults_and_completes(tmp_path) -> None:
             db, bottle=bottle,
             request=RoomBreakRequest("#test", 1800, 0.25, -0.4),
         )
+        due_at = int(time.time()) - 1
         await db.execute(
-            """UPDATE mood_room_breaks SET rejoin_at = ?
+            """UPDATE mood_room_breaks SET started_at = ?, rejoin_at = ?
                WHERE bot_id = ? AND network = ? AND channel = ?""",
-            (int(time.time()) - 1, bottle_id, "test", "#test"),
+            (due_at - 1, due_at, bottle_id, "test", "#test"),
         )
         await db.commit()
         assert await _finish_room_break(db, bottle=bottle, channel="#test")

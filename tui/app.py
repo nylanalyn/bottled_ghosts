@@ -232,11 +232,15 @@ class BottledGhostsApp(App[None]):
         sediment_table = self.query_one("#sediment", DataTable)
         sediment_table.cursor_type = "row"
         sediment_table.zebra_stripes = True
-        sediment_table.add_columns("ID", "User", "Type", "Confidence", "Candidate")
+        sediment_table.add_columns(
+            "ID", "Bottle", "User", "Type", "Confidence", "Candidate",
+        )
         memory_table = self.query_one("#memories", DataTable)
         memory_table.cursor_type = "row"
         memory_table.zebra_stripes = True
-        memory_table.add_columns("ID", "User", "Type", "Confidence", "Expires", "Memory")
+        memory_table.add_columns(
+            "ID", "Bottle", "User", "Type", "Confidence", "Expires", "Memory",
+        )
         module_table = self.query_one("#module-list", DataTable)
         module_table.cursor_type = "row"
         module_table.zebra_stripes = True
@@ -352,8 +356,9 @@ class BottledGhostsApp(App[None]):
         candidates = await list_memory_candidates(self.db)
         for candidate in candidates:
             table.add_row(
-                str(candidate.id), candidate.canonical_name, candidate.memory_type,
-                f"{candidate.confidence:.2f}", candidate.candidate_text,
+                str(candidate.id), candidate.bottle_name, candidate.canonical_name,
+                candidate.memory_type, f"{candidate.confidence:.2f}",
+                candidate.candidate_text,
                 key=str(candidate.id),
             )
         self.selected_candidate_id = candidates[0].id if candidates else None
@@ -373,7 +378,9 @@ class BottledGhostsApp(App[None]):
             for source in candidate.source_messages
         )
         self.query_one("#candidate-detail", Static).update(Text(
-            f"Candidate {candidate.id} for {candidate.canonical_name} ({candidate.user_id})\n\n"
+            f"Candidate {candidate.id} owned by {candidate.bottle_name} "
+            f"(Bottle {candidate.bot_id})\n"
+            f"About {candidate.canonical_name} ({candidate.user_id})\n\n"
             f"Proposed {candidate.memory_type} [{candidate.confidence:.2f}]:\n"
             f"{candidate.candidate_text}\n\nSource messages:\n{sources}"
         ))
@@ -418,9 +425,10 @@ class BottledGhostsApp(App[None]):
         memories = await list_all_user_memories(self.db)
         for memory in memories:
             table.add_row(
-                str(memory.id), memory.canonical_name, memory.memory_type,
-                f"{memory.confidence:.2f}", memory.expires_at or "never",
-                memory.memory_text, key=str(memory.id),
+                str(memory.id), memory.bottle_name, memory.canonical_name,
+                memory.memory_type, f"{memory.confidence:.2f}",
+                memory.expires_at or "never", memory.memory_text,
+                key=str(memory.id),
             )
         self.selected_memory_id = memories[0].id if memories else None
         if memories:
@@ -437,7 +445,8 @@ class BottledGhostsApp(App[None]):
             return
         source = memory.source_body or "No source message available."
         self.query_one("#memory-detail", Static).update(Text(
-            f"Memory {memory.id} for {memory.canonical_name} ({memory.user_id})\n"
+            f"Memory {memory.id} owned by {memory.bottle_name} (Bottle {memory.bot_id})\n"
+            f"About {memory.canonical_name} ({memory.user_id})\n"
             f"Expires: {memory.expires_at or 'never'}\n"
             f"Source candidate: {memory.source_candidate_id or 'none'} — {source}"
         ))

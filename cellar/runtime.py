@@ -192,7 +192,9 @@ async def run_bottle_once(
                 text=body, exclude_message_ids=message_ids,
             )
             memories = (
-                await approved_memory_texts(db, user_id=user_id)
+                await approved_memory_texts(
+                    db, bot_id=bottle.id, user_id=user_id,
+                )
                 if latest.identity_confidence >= 0.8 else []
             )
             dreams = await recent_dream_texts(db, bot_id=bottle.id)
@@ -252,7 +254,8 @@ async def run_bottle_once(
                 candidates = await extract_candidates(bottle.llm, speaker=speaker, body=body)
                 async with database_lock:
                     inserted = await store_memory_candidates(
-                        db, user_id=user_id, source_message_ids=message_ids,
+                        db, bot_id=bottle.id, user_id=user_id,
+                        source_message_ids=message_ids,
                         candidates=candidates,
                     )
                 logger.info("stored %d pending memory candidate(s) for %s", inserted, speaker)

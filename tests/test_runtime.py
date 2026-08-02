@@ -297,8 +297,11 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
         prompts.append(prompt)
         return "/me nods slowly\none reply"
 
-    async def fake_extract(_profile, *, speaker: str, body: str):
+    async def fake_extract(
+        _profile, *, speaker: str, body: str, bot_names: tuple[str, ...],
+    ):
         assert speaker == "alice"
+        assert set(bot_names) == {"ghost"}
         extracted_bodies.append(body)
         return [ExtractedMemory(text="Test memory", type="project", confidence=0.8)]
 

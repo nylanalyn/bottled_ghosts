@@ -259,7 +259,10 @@ async def run_bottle_once(
         logger.info("sent %d reply line(s) to %s", len(lines), reply_target)
         if bottle.extract_memories and replies_enabled:
             try:
-                candidates = await extract_candidates(bottle.llm, speaker=speaker, body=body)
+                candidates = await extract_candidates(
+                    bottle.llm, speaker=speaker, body=body,
+                    bot_names=(active_nick(), *bottle.address_names),
+                )
                 async with database_lock:
                     inserted = await store_memory_candidates(
                         db, bot_id=bottle.id, user_id=user_id,

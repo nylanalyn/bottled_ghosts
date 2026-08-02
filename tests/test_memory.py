@@ -63,6 +63,49 @@ async def test_extractor_retries_truncated_json_with_larger_budget(monkeypatch) 
     ]
 
 
+@pytest.mark.asyncio
+async def test_extractor_marks_bot_names_as_vocatives_and_rejects_leaks(
+    monkeypatch,
+) -> None:
+    prompts: list[list[dict[str, str]]] = []
+
+    async def fake_complete(_profile, messages) -> str:
+        prompts.append(messages)
+        return (
+            '{"candidates":['
+            '{"text":"Maternal great-grandfather fought in the Winter War and '
+            'Continuation War","type":"relationship","confidence":0.9},'
+            '{"text":"Cat is named Aria","type":"relationship","confidence":0.8},'
+            '{"text":"Avoids fraudulent offers","type":"preference","confidence":0.7}'
+            ']}'
+        )
+
+    monkeypatch.setattr("cellar.memory.complete", fake_complete)
+    candidates = await extract_candidates(
+        LLMProfile(endpoint="http://localhost", model="test"),
+        speaker="mikoolo",
+        body=(
+            "Also aria. My maternal grandma's dad fought in the Winter War. "
+            "I love my cat Aria, and I avoid fraudulent offers, fraud."
+        ),
+        bot_names=("Aria", "Fraud"),
+    )
+
+    extraction_message = prompts[0][1]["content"]
+    assert extraction_message.count("[direct address to the bot]") == 3
+    assert "fraudulent" in extraction_message
+    assert "aria" not in extraction_message.casefold()
+    assert candidates == [
+        ExtractedMemory(
+            text="Maternal great-grandfather fought in the Winter War and Continuation War",
+            type="relationship", confidence=0.9,
+        ),
+        ExtractedMemory(
+            text="Avoids fraudulent offers", type="preference", confidence=0.7,
+        ),
+    ]
+
+
 def test_extractor_model_rejects_unknown_memory_category() -> None:
     with pytest.raises(ValidationError):
         ExtractedMemory(text="Sensitive guess", type="medical", confidence=0.5)  # type: ignore[arg-type]

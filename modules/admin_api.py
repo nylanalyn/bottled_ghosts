@@ -9,8 +9,10 @@ from cellar.admin_store import (
     admin_api_token,
     away_status,
     consume_admin_events,
+    is_quiet,
     response_enabled,
     set_away_status,
+    set_quiet,
     set_response_enabled,
 )
 from cellar.irc import mentions_any_nick
@@ -127,17 +129,25 @@ class Module:
                 messages = [
                     "help - this message\nstatus - Bottle status, active modules, and mood when the moods module is active\nmodel - current LLM model\n"
                     "off - stop public model responses\non - resume public model responses\n"
+                    "quiet [on|off] - respond only to direct pings, no automatic speech\n"
                     "away <message> - set an availability note\nback - clear the availability note\n"
                     "summarize [#channel] - summarize the last 50 room lines and report watched-nick pings"
                 ]
             elif command == "status":
                 enabled = await response_enabled(ctx.db, bottle_id=ctx.bottle.id)
+                quiet = await is_quiet(ctx.db, bottle_id=ctx.bottle.id)
+                if not enabled:
+                    responding = "OFF (monitoring emergencies)"
+                elif quiet:
+                    responding = "QUIET (pings only)"
+                else:
+                    responding = "yes"
                 active_modules = _active_module_names(ctx.module_settings, ctx.state.failed_modules)
                 messages = [
                     "admin: connected\n"
                     f"irc: {'connected' if ctx.state.irc_connected else 'disconnected'}\n"
                     f"model: {ctx.bottle.llm.model}\n"
-                    f"responding: {'yes' if enabled else 'OFF (monitoring emergencies)'}\n"
+                    f"responding: {responding}\n"
                     f"modules: {', '.join(active_modules) if active_modules else 'none'}"
                 ]
                 if ctx.state.failed_modules:
@@ -159,10 +169,39 @@ class Module:
                     ctx.db, bottle_id=ctx.bottle.id, enabled=enabled,
                     actor="discord-admin",
                 )
+                # `on` is a full reset to normal behavior: clear quiet too, so a
+                # bottle that was quietened returns to full ambient operation.
+                # This runs even if response_enabled was already on (no-op above).
+                if enabled:
+                    await set_quiet(
+                        ctx.db, bottle_id=ctx.bottle.id, enabled=False,
+                        actor="discord-admin",
+                    )
                 messages = [
                     f"{ctx.bottle.name} is "
                     + ("back online." if enabled else "now silent; emergency monitoring remains active.")
                 ]
+            elif command == "quiet":
+                if not argument:
+                    quiet = await is_quiet(ctx.db, bottle_id=ctx.bottle.id)
+                    messages = [f"{ctx.bottle.name} quiet mode: {'on' if quiet else 'off'}"]
+                elif argument.lower() in {"on", "yes", "1", "true"}:
+                    await set_quiet(
+                        ctx.db, bottle_id=ctx.bottle.id, enabled=True,
+                        actor="discord-admin",
+                    )
+                    messages = [
+                        f"{ctx.bottle.name} is in quiet mode; "
+                        "will respond to direct pings only."
+                    ]
+                elif argument.lower() in {"off", "no", "0", "false", "clear"}:
+                    await set_quiet(
+                        ctx.db, bottle_id=ctx.bottle.id, enabled=False,
+                        actor="discord-admin",
+                    )
+                    messages = [f"{ctx.bottle.name} quiet mode is off."]
+                else:
+                    messages = ["usage: quiet [on|off]"]
             elif command == "away":
                 if not argument:
                     away = await away_status(ctx.db, bottle_id=ctx.bottle.id)

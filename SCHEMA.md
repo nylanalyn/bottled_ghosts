@@ -110,7 +110,7 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 
 ## bot_runtime_control
 
-Stores persistent operational response control separately from Bottle enablement and process liveness. Columns: `bot_id INTEGER PRIMARY KEY`, `response_enabled INTEGER NOT NULL DEFAULT 1`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
+Stores persistent operational response control separately from Bottle enablement and process liveness. Columns: `bot_id INTEGER PRIMARY KEY`, `response_enabled INTEGER NOT NULL DEFAULT 1`, `quiet INTEGER NOT NULL DEFAULT 0`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. `response_enabled` is the full on/off kill switch for public responses; `quiet` is a third state where the bottle stays online and responds to direct pings (PMs and name mentions) but suppresses ambient/automatic speech. `quiet` is only meaningful when `response_enabled = 1`; re-enabling responses clears `quiet`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
 
 ## bot_away_status
 
@@ -185,3 +185,4 @@ Stores runtime-enforced, temporary mood breaks per Bottle and IRC channel. Colum
 - 029: Add persistent, runtime-enforced mood room breaks and scheduled baseline reset metadata.
 - 030: Scope sediment and approved memories to their owning Bottle, backfilling ownership from source-message provenance.
 - 031: Separate canonical memories from their many evidence candidates, add exact FTS retrieval, archived merge redirects, persistent consolidation proposals, and expanded append-only audit actions.
+- 032: Add per-Bottle quiet mode column; stay online and respond to direct pings while suppressing ambient/automatic speech.

@@ -8,9 +8,11 @@ from cellar.admin_store import (
     away_status,
     consume_admin_events,
     enqueue_admin_event,
+    is_quiet,
     response_enabled,
     set_admin_api_token,
     set_away_status,
+    set_quiet,
     set_response_enabled,
 )
 from cellar.models import IncomingIRCMessage, IRCProfile, LLMProfile
@@ -98,6 +100,51 @@ async def test_away_status_is_persistent_and_audited(tmp_path) -> None:
         assert [(row["old_value"], row["new_value"]) for row in rows] == [
             ("null", '"sleeping"'),
             ('"sleeping"', "null"),
+        ]
+    finally:
+        await db.close()
+
+
+async def test_quiet_mode_is_persistent_audited_and_reset_by_on(tmp_path) -> None:
+    db = await open_database(tmp_path / "quiet.db")
+    try:
+        bottle = await _bottle(db, tmp_path)
+        # Default state: not quiet, and responses enabled.
+        assert not await is_quiet(db, bottle_id=bottle.id)
+        assert await response_enabled(db, bottle_id=bottle.id)
+
+        # Toggle quiet on.
+        assert await set_quiet(db, bottle_id=bottle.id, enabled=True, actor="test")
+        assert await is_quiet(db, bottle_id=bottle.id)
+        # Idempotent: setting the same value is a no-op.
+        assert not await set_quiet(db, bottle_id=bottle.id, enabled=True, actor="test")
+
+        # Audit row was written for the change.
+        rows = await (await db.execute(
+            """SELECT old_value, new_value FROM configuration_events
+               WHERE changed_fields = 'quiet' ORDER BY id"""
+        )).fetchall()
+        assert [(row["old_value"], row["new_value"]) for row in rows] == [
+            ("false", "true"),
+        ]
+
+        # Turning responses off then back on clears quiet ("on" = full reset).
+        assert await set_response_enabled(db, bottle_id=bottle.id, enabled=False, actor="test")
+        assert not await response_enabled(db, bottle_id=bottle.id)
+        # Quiet is irrelevant while fully off but still reports its stored value.
+        assert await is_quiet(db, bottle_id=bottle.id)
+        assert await set_response_enabled(db, bottle_id=bottle.id, enabled=True, actor="test")
+        assert await response_enabled(db, bottle_id=bottle.id)
+        assert not await is_quiet(db, bottle_id=bottle.id)
+
+        # The reset wrote a second quiet audit event (true -> false).
+        rows = await (await db.execute(
+            """SELECT old_value, new_value FROM configuration_events
+               WHERE changed_fields = 'quiet' ORDER BY id"""
+        )).fetchall()
+        assert [(row["old_value"], row["new_value"]) for row in rows] == [
+            ("false", "true"),
+            ("true", "false"),
         ]
     finally:
         await db.close()
@@ -224,6 +271,23 @@ async def test_admin_api_matches_legacy_contract(tmp_path) -> None:
                 off = await session.post(f"http://127.0.0.1:{port}/v1/command", json={"command": "off", "args": ""}, headers=headers)
                 assert off.status == 200
                 assert not await response_enabled(db, bottle_id=bottle.id)
+
+                # Turn responses back on, then exercise quiet mode over the API.
+                await set_response_enabled(db, bottle_id=bottle.id, enabled=True, actor="test")
+                quiet_status = await session.post(f"http://127.0.0.1:{port}/v1/command", json={"command": "quiet", "args": ""}, headers=headers)
+                assert quiet_status.status == 200
+                assert "quiet mode: off" in (await quiet_status.json())["messages"][0]
+                quiet_on = await session.post(f"http://127.0.0.1:{port}/v1/command", json={"command": "quiet", "args": "on"}, headers=headers)
+                assert quiet_on.status == 200
+                assert await is_quiet(db, bottle_id=bottle.id)
+                # Status reports the QUIET state while responses remain enabled.
+                qstatus = await session.post(f"http://127.0.0.1:{port}/v1/command", json={"command": "status", "args": ""}, headers=headers)
+                assert "QUIET (pings only)" in (await qstatus.json())["messages"][0]
+                assert await response_enabled(db, bottle_id=bottle.id)
+                # `on` clears quiet (full reset) as well as re-enabling responses.
+                on = await session.post(f"http://127.0.0.1:{port}/v1/command", json={"command": "on", "args": ""}, headers=headers)
+                assert on.status == 200
+                assert not await is_quiet(db, bottle_id=bottle.id)
         finally:
             await module.stop(context)
             await asyncio.sleep(0)

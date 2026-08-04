@@ -435,7 +435,7 @@ async def test_migrations_030_and_031_backfill_owner_and_evidence(tmp_path) -> N
         violations = await (await migrated.execute(
             "PRAGMA foreign_key_check"
         )).fetchall()
-        assert version is not None and version[0] == 31
+        assert version is not None and version[0] == 32
         assert candidate_owner is not None and candidate_owner[0] == bottle_id
         assert memory_owner is not None and memory_owner[0] == bottle_id
         assert evidence is not None

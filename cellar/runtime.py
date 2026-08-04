@@ -16,7 +16,7 @@ from cellar.irc import (
     mentions_any_nick,
 )
 from cellar.local_time import local_datetime_context
-from cellar.admin_store import away_status, response_enabled
+from cellar.admin_store import away_status, is_quiet, response_enabled
 from cellar.identity import resolve_user_identity
 from cellar.ignore_store import matching_ignore_action
 from cellar.listening import ListeningWindowManager
@@ -348,6 +348,7 @@ async def run_bottle_once(
                 return
             commands = list(module_context.commands)
             replies_enabled = await response_enabled(db, bottle_id=bottle.id)
+            quiet_mode = await is_quiet(db, bottle_id=bottle.id)
             request = module_context.room_break
             configured_channels = {irc_casefold(item) for item in bottle.irc.channels}
             if request is not None and irc_casefold(request.channel) in configured_channels:
@@ -394,7 +395,11 @@ async def run_bottle_once(
         key = (irc_casefold(conversation), user_id)
         address_names = (active_nick(), *bottle.address_names)
         addressed = direct_message or mentions_any_nick(message.body, address_names)
-        if module_context.request_response:
+        if quiet_mode:
+            # Quiet bottles respond only to direct pings; suppress ambient
+            # triggers and conversation-window continuations alike.
+            should_respond = addressed
+        elif module_context.request_response:
             should_respond = True
         elif module_context.suppress_automatic_response:
             should_respond = False

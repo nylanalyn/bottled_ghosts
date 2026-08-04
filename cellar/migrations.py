@@ -924,6 +924,16 @@ async def migration_031(db: aiosqlite.Connection) -> None:
         raise RuntimeError("canonical-memory migration left foreign-key violations")
 
 
+async def migration_032(db: aiosqlite.Connection) -> None:
+    """Add per-bottle quiet mode: stay online, respond only to direct pings."""
+    await db.execute(
+        """
+        ALTER TABLE bot_runtime_control
+            ADD COLUMN quiet INTEGER NOT NULL DEFAULT 0 CHECK (quiet IN (0, 1))
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -944,6 +954,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_029,
     migration_030,
     migration_031,
+    migration_032,
 )
 
 

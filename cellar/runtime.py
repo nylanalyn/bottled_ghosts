@@ -219,7 +219,9 @@ async def run_bottle_once(
             bot_nicks=(active_nick(),),
             local_time=local_datetime_context(bottle.timezone),
         )
-        response = await complete(bottle.llm, prompt)
+        module_context.generation_prompt = prompt
+        await modules.before_generation(module_context)
+        response = await complete(bottle.llm, module_context.generation_prompt)
         module_context.response = response
         async with database_lock:
             await modules.after_response(module_context)
@@ -386,7 +388,7 @@ async def run_bottle_once(
             room_break_tasks.add(task)
             task.add_done_callback(room_break_tasks.discard)
             return
-        if commands:
+        if commands and replies_enabled:
             await send_module_commands(
                 commands, target=message.target, channel=conversation,
             )

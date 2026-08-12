@@ -257,6 +257,9 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
         async def before_prompt(self, _context) -> None:
             hook_counts["before_prompt"] += 1
 
+        async def before_generation(self, _context) -> None:
+            return None
+
         async def after_response(self, _context) -> None:
             hook_counts["after_response"] += 1
 
@@ -498,6 +501,9 @@ async def test_direct_messages_share_stable_incoming_and_outgoing_history(
             return None
 
         async def before_prompt(self, _context) -> None:
+            return None
+
+        async def before_generation(self, _context) -> None:
             return None
 
         async def after_response(self, _context) -> None:

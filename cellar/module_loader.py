@@ -14,6 +14,7 @@ from modules.ignore import Module as IgnoreModule
 from modules.moods import Module as MoodsModule
 from modules.admin_api import Module as AdminAPIModule
 from modules.emergency_alert import Module as EmergencyAlertModule
+from modules.reflection import Module as ReflectionModule
 
 logger = logging.getLogger(__name__)
 ModuleFactory = Callable[[], ModuleContract]
@@ -28,6 +29,7 @@ REGISTRY: tuple[tuple[str, ModuleFactory], ...] = (
     ("emergency_alert", EmergencyAlertModule),
     ("fishing", FishingModule),
     ("moods", MoodsModule),
+    ("reflection", ReflectionModule),
 )
 
 

@@ -2,6 +2,12 @@ import logging
 
 import aiosqlite
 
+from cellar.admin_store import (
+    is_quiet,
+    response_enabled,
+    set_quiet,
+    set_response_enabled,
+)
 from cellar.dream_store import dream_window, messages_for_dream, store_dream
 from cellar.llm import complete
 from cellar.models import Bottle, DreamSummary
@@ -59,3 +65,30 @@ async def run_dream(
     )
     logger.info("stored dream %d for Bottle %d (%s)", summary.id, bottle.id, bottle.name)
     return summary
+
+
+async def run_sleeping_dream(
+    db: aiosqlite.Connection, *, bottle: Bottle, hours: int = 24,
+    actor: str = "systemd-dream",
+) -> DreamSummary | None:
+    """Run a dream while the Bottle is fully asleep, then restore its state."""
+    previous_response_enabled = await response_enabled(db, bottle_id=bottle.id)
+    previous_quiet = await is_quiet(db, bottle_id=bottle.id)
+    sleep_started = False
+    try:
+        if previous_response_enabled:
+            await set_response_enabled(
+                db, bottle_id=bottle.id, enabled=False, actor=actor,
+            )
+        sleep_started = True
+        logger.info("Bottle %d (%s) is sleeping for its dream", bottle.id, bottle.name)
+        return await run_dream(db, bottle=bottle, hours=hours)
+    finally:
+        if sleep_started:
+            await set_response_enabled(
+                db, bottle_id=bottle.id, enabled=previous_response_enabled, actor=actor,
+            )
+            await set_quiet(
+                db, bottle_id=bottle.id, enabled=previous_quiet, actor=actor,
+            )
+            logger.info("Bottle %d (%s) woke after its dream", bottle.id, bottle.name)

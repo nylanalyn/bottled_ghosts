@@ -10,7 +10,7 @@ from cellar.admin_store import set_admin_api_token
 from cellar.alias_store import add_alias, delete_alias, list_aliases
 from cellar.nick_store import set_alternate_nicks
 from cellar.dream_store import list_dreams
-from cellar.dreams import run_dream
+from cellar.dreams import run_dream, run_sleeping_dream
 from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
 from cellar.runtime import run_bottle, run_bottles
 from cellar.memory_store import (
@@ -339,9 +339,13 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"Deleted ignore rule {args.rule_id}")
         elif args.command == "dream":
-            summary = await run_dream(
-                db, bottle=await load_bottle(db, args.bottle_id), hours=args.hours,
-            )
+            loaded_bottle = await load_bottle(db, args.bottle_id)
+            if args.sleep:
+                summary = await run_sleeping_dream(
+                    db, bottle=loaded_bottle, hours=args.hours, actor=args.actor,
+                )
+            else:
+                summary = await run_dream(db, bottle=loaded_bottle, hours=args.hours)
             print(f"Stored dream {summary.id}" if summary else "No messages in dream period")
         elif args.command == "dream-all":
             for enabled_bottle in await load_enabled_bottles(db):
@@ -534,6 +538,11 @@ def main() -> None:
     dream_parser = commands.add_parser("dream", help="summarize one Bottle's recent activity")
     dream_parser.add_argument("bottle_id", type=int)
     dream_parser.add_argument("--hours", type=int, default=24)
+    dream_parser.add_argument(
+        "--sleep", action="store_true",
+        help="fully silence the Bottle during the dream, then restore its prior state",
+    )
+    dream_parser.add_argument("--actor", default="operator")
     dream_all = commands.add_parser("dream-all", help="summarize every enabled Bottle")
     dream_all.add_argument("--hours", type=int, default=24)
     dreams_parser = commands.add_parser("dreams", help="list stored dreams for a Bottle")

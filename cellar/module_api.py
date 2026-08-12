@@ -47,6 +47,7 @@ class ModuleContext:
     commands: list[ModuleCommand] = field(default_factory=list)
     room_break: RoomBreakRequest | None = None
     response: str | None = None
+    generation_prompt: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -101,6 +102,9 @@ class ModuleRunner:
 
     async def before_prompt(self, ctx: ModuleContext) -> None:
         await self._run("before_prompt", ctx)
+
+    async def before_generation(self, ctx: ModuleContext) -> None:
+        await self._run("before_generation", ctx)
 
     async def after_response(self, ctx: ModuleContext) -> None:
         await self._run("after_response", ctx)

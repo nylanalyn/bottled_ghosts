@@ -1,0 +1,10 @@
+[Unit]
+Description=Bottled Ghosts nightly dream: Frauderick
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/aureate/code/bottled_ghosts
+ExecStart=/home/aureate/code/bottled_ghosts/.venv/bin/bottled-ghosts --database /home/aureate/code/bottled_ghosts/spirits.db dream 2 --hours 24 --sleep --actor systemd-dream
+

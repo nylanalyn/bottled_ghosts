@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly dream timer: Frauderick
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=frauderick-dream.service
+
+[Install]
+WantedBy=timers.target

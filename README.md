@@ -109,6 +109,16 @@ bottled-ghosts module-settings 1 channel_context '{"label":"quiet room"}' --acto
 Reconnect the Bottle after changing a module toggle. Module hook failures are
 logged and isolated from other modules and the IRC runtime.
 
+The optional `reflection` module gives a Bottle a short private planning pass
+over its fully assembled prompt before public response generation. The notes
+are ephemeral: they are not logged, remembered, or sent to IRC. Enable it for
+one Bottle at a time while evaluating its effect:
+
+```bash
+bottled-ghosts module-toggle 1 reflection on --actor aureate
+bottled-ghosts module-settings 1 reflection '{"max_tokens":160,"temperature":0.2}' --actor aureate
+```
+
 Connect a Bottle to the existing `ircbot_core/discord_admin.py` router with a
 unique loopback port and bearer token:
 
@@ -210,9 +220,24 @@ bottled-ghosts dream-all --hours 24
 bottled-ghosts dreams 1
 ```
 
-Schedule `dream-all` with cron or a systemd timer for nightly operation. Each
-summary records its exact period in SQLite, invokes enabled modules' `nightly`
-hooks, and becomes retrieval context for later replies.
+Each summary records its exact period in SQLite, invokes enabled modules'
+`nightly` hooks, and becomes retrieval context for later replies. For automatic
+nightly operation, install the per-Bottle timers included in this repository:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp aria-dream.service aria-dream.timer frauderick-dream.service \
+   frauderick-dream.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now aria-dream.timer frauderick-dream.timer
+systemctl --user list-timers '*-dream.timer'
+```
+
+Aria dreams at 03:00 and Frauderick at 03:30 in the host's local timezone.
+Those services use `dream --sleep`: the Bottle remains connected but full
+responses and module-generated IRC commands are disabled during the dream, and
+the previous response state is restored afterward, including when the LLM call
+fails. Rumi-as, Bork, and disabled Bottles are not included in these timers.
 
 Open the read-only operational dashboard with:
 

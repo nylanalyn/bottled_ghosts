@@ -3,10 +3,16 @@
 ## Decision
 
 Nightly summarization is exposed as explicit `dream` and `dream-all` commands.
-Operators may invoke them manually or schedule them with cron or a systemd
-timer. Each run reads a bounded SQLite message window, calls the configured LLM,
-stores the period and summary in SQLite, then invokes enabled modules' `nightly`
-hooks. Recent summaries are retrieved before ordinary log history.
+Operators may invoke them manually or schedule per-Bottle runs with cron or
+systemd timers. Each run reads a bounded SQLite message window, calls the
+configured LLM, stores the period and summary in SQLite, then invokes enabled
+modules' `nightly` hooks. Recent summaries are retrieved before ordinary log
+history.
+
+The repository's Aria and Frauderick timers use `dream --sleep`. This temporarily
+disables the Bottle's full public responses and module-generated IRC commands,
+then restores the prior runtime-control state in a `finally` path. The IRC
+connection remains online so incoming messages continue to be logged.
 
 ## Alternatives considered
 
@@ -24,6 +30,6 @@ Bounded input prevents an active channel from exhausting the model context.
 
 ## Tradeoffs
 
-Operators must configure external scheduling if they want automatic nightly
-runs. The first implementation summarizes at most 200 recent messages in the
-requested window. Summaries span all channels observed by one Bottle.
+Operators must configure or enable external scheduling if they want automatic
+nightly runs. The first implementation summarizes at most 200 recent messages
+in the requested window. Summaries span all channels observed by one Bottle.

@@ -403,11 +403,12 @@ Incoming message:
 9. When the window expires: retrieve relevant memory
 10. Run `before_prompt` module hooks
 11. Build prompt from accumulated window messages
-12. Call LLM
-13. Sanitize output
-14. Run `after_response` module hooks
-15. Send reply
-16. Extract candidate memories
+12. Run `before_generation` module hooks over the fully assembled prompt
+13. Call LLM
+14. Sanitize output
+15. Run `after_response` module hooks
+16. Send reply
+17. Extract candidate memories
 
 The runtime is the final authority on response eligibility. Prompts and modules
 cannot override an ignore rule.
@@ -604,6 +605,12 @@ on_message(ctx)
 before_prompt(ctx)
 after_response(ctx)
 nightly(ctx)
+```
+
+Optional generation hook:
+
+```python
+before_generation(ctx)
 ```
 
 Modules must be stateless or persist only via database.

@@ -158,9 +158,12 @@ class Module:
                 "have something worth saying. Speak as a participant, not a spectator: "
                 "pick up the topic with your own take or experience, join in on a game "
                 "or activity people are playing, or bring up something of your own. "
+                "If the current exchange is addressed to another participant, do not "
+                "answer it as if you were the recipient; treat 'you' as that person. "
                 "Do not comment on what other people are doing or describe the room's "
                 "behavior — regulars don't narrate the channel. Never claim someone "
-                f"addressed you. If nothing natural comes to mind, reply with exactly "
+                f"addressed you. If the message is clearly for someone else or nothing "
+                f"natural comes to mind, reply with exactly "
                 f"{PASS_SENTINEL} and nothing else, and you will simply stay quiet."
             )
         elif ctx.response_reason == "utility_event":
@@ -170,6 +173,8 @@ class Module:
                 "React to the event itself the way another player would — join in or "
                 "respond to its content. Do not comment on other people's behavior or "
                 "narrate what the room is doing. Never claim someone addressed you. "
+                "If the event is addressed to another participant, do not answer as "
+                "that participant. "
                 f"If you have nothing worth adding, reply with exactly {PASS_SENTINEL} "
                 "and nothing else, and you will simply stay quiet."
             )

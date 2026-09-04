@@ -53,6 +53,24 @@ def test_context_blocks_and_current_message_land_in_final_user_turn() -> None:
     assert content.endswith("--- end quoted IRC message ---")
 
 
+def test_current_message_carries_room_addressing() -> None:
+    result = build_prompt(
+        soul="Be spectral.", module_state=[], memories=[], dreams=[], relevant=[],
+        history=[], speaker="alice", body="bob, i sent you something",
+        bot_nicks=("ghost",), addressed=False,
+    )
+    content = result[-1]["content"]
+    assert "Addressing: The latest message was not addressed to you." in content
+    assert "any 'you' in it refers to that recipient, not you" in content
+
+    addressed = build_prompt(
+        soul="Be spectral.", module_state=[], memories=[], dreams=[], relevant=[],
+        history=[], speaker="alice", body="ghost, i sent you something",
+        bot_nicks=("ghost",), addressed=True,
+    )
+    assert "Addressing: The latest message was addressed to you." in addressed[-1]["content"]
+
+
 def test_bot_history_lines_become_assistant_turns() -> None:
     # The bot's own prior lines must land in the assistant role so the model
     # sees its voice as dialogue rather than text to imitate. Other speakers

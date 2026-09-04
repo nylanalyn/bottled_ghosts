@@ -217,6 +217,7 @@ async def run_bottle_once(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,
             dreams=dreams, relevant=relevant, history=history, speaker=speaker, body=body,
             bot_nicks=(active_nick(),),
+            addressed=latest.addressed,
             local_time=local_datetime_context(bottle.timezone),
         )
         module_context.generation_prompt = prompt

@@ -601,6 +601,7 @@ async def test_ambient_module_requests_normal_runtime_response(monkeypatch, tmp_
         assert sent == [("#test", "ambient reply")]
         assert len(prompts) == 1
         assert "ambient contribution" in prompts[0][1]["content"]
+        assert "latest message was not addressed to you" in prompts[0][1]["content"]
         state = await (await db.execute(
             "SELECT eligible_lines_seen, next_trigger_line FROM ambient_chat_state"
         )).fetchone()

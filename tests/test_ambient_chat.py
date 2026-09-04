@@ -64,6 +64,7 @@ async def test_ambient_chat_persists_threshold_and_respects_eligibility(tmp_path
         contexts[-1].response_reason = "ambient"
         await runner.before_prompt(contexts[-1])
         assert "ambient contribution" in contexts[-1].prompt_sections[-1]
+        assert "as if you were the recipient" in contexts[-1].prompt_sections[-1]
         await runner.after_response(contexts[-1])
         unchanged = await (await db.execute(
             "SELECT eligible_lines_seen, next_trigger_line FROM ambient_chat_state"
@@ -173,6 +174,7 @@ async def test_ambient_chat_paces_utility_bot_events(tmp_path) -> None:
         # 4. utility_event prompt instruction; after_response must not reset normal cadence.
         await runner.before_prompt(second)
         assert any("occasional reaction" in s for s in second.prompt_sections)
+        assert any("addressed to another participant" in s for s in second.prompt_sections)
         before = await (await db.execute(
             "SELECT eligible_lines_seen, next_trigger_line FROM ambient_chat_state"
         )).fetchone()

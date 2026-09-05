@@ -57,9 +57,10 @@ after each handled message. Enable it explicitly for a Bottle:
 bottled-ghosts memory-extraction 1 on
 ```
 
-The extractor may write categorized candidates to SQLite, but all candidates
-remain pending and are not used as trusted memory. Disable extraction with the
-same command and `off`.
+The extractor may write categorized candidates to SQLite. New facts remain
+pending and are not used as trusted memory; exact repeats of an existing active
+memory are attached automatically as additional evidence. Disable extraction
+with the same command and `off`.
 
 Review sediment and inspect approved memories with:
 
@@ -68,6 +69,9 @@ bottled-ghosts sediment-list
 bottled-ghosts sediment-approve 1 --actor aureate
 bottled-ghosts sediment-reject 2 --actor aureate
 bottled-ghosts sediment-attach CANDIDATE_ID MEMORY_ID --actor aureate
+bottled-ghosts sediment-bulk-approve --min-confidence 0.9
+bottled-ghosts sediment-bulk-approve --min-confidence 0.9 --type preference --apply --actor aureate
+bottled-ghosts sediment-auto-approve-repeats
 bottled-ghosts memories BOTTLE_ID USER_UUID
 bottled-ghosts memory-evidence MEMORY_ID
 bottled-ghosts memory-edit 1 --text "Prefers mature cheese" --actor aureate
@@ -77,12 +81,15 @@ bottled-ghosts consolidation-list
 bottled-ghosts consolidation-accept PROPOSAL_ID --actor aureate
 ```
 
-Exact repeated approvals automatically become additional evidence for the
-existing canonical memory. Similar wording is never merged automatically:
-the explicit consolidation scan creates persistent proposals for operator
-acceptance or rejection. Approval, rejection, evidence attachment, edits, and
-merges are transactional and append audit events. Merged memories remain as
-archived redirects, and every supporting candidate retains its source messages.
+Exact repeats of an already approved memory automatically become additional
+evidence, with `automatic:exact-repeat` recorded in the audit log. Similar
+wording is never merged automatically: the explicit consolidation scan creates
+persistent proposals for operator acceptance or rejection. The bulk approval
+command previews its filtered selection by default and only changes SQLite
+when `--apply` is supplied. Model confidence alone is not proof of a good
+memory. Approval, rejection, evidence attachment, edits, and merges are
+transactional and append audit events. Merged memories remain as archived
+redirects, and every supporting candidate retains its source messages.
 Sediment and approved memories belong to the Bottle that extracted them; the
 dashboard displays that owner. Only that Bottle's approved memories are
 retrieved into its prompts. Search raw logs with:

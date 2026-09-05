@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import unicodedata
 
@@ -16,6 +17,8 @@ from cellar.models import (
 )
 
 TEMPORARY_MEMORY_HOURS = 24
+AUTOMATIC_REPEAT_ACTOR = "automatic:exact-repeat"
+logger = logging.getLogger(__name__)
 MEMORY_SEARCH_STOPWORDS = {
     "about", "after", "again", "also", "and", "are", "but", "for", "from",
     "has", "have", "into", "is", "its", "that", "the", "their", "they",
@@ -74,7 +77,65 @@ async def store_memory_candidates(
     except Exception:
         await db.rollback()
         raise
+    try:
+        await auto_approve_exact_repeats(
+            db, bot_id=bot_id, user_id=user_id,
+        )
+    except Exception:
+        logger.exception(
+            "failed to automatically approve exact memory repeats"
+        )
     return inserted
+
+
+async def auto_approve_exact_repeats(
+    db: aiosqlite.Connection, *, bot_id: int | None = None,
+    user_id: str | None = None,
+) -> int:
+    filters = ["c.status = 'pending'"]
+    params: list[object] = []
+    if bot_id is not None:
+        filters.append("c.bot_id = ?")
+        params.append(bot_id)
+    if user_id is not None:
+        filters.append("c.user_id = ?")
+        params.append(user_id)
+    where = " AND ".join(filters)
+    candidates = await (await db.execute(
+        f"SELECT id, bot_id, user_id, candidate_text FROM memory_candidates WHERE {where}",
+        params,
+    )).fetchall()
+    memories = await (await db.execute(
+        """SELECT DISTINCT m.bot_id, m.user_id, m.id, m.memory_text
+           FROM user_memories m
+           JOIN user_memory_evidence e ON e.memory_id = m.id
+           WHERE m.state = 'active'
+             AND (m.expires_at IS NULL OR m.expires_at > CURRENT_TIMESTAMP)"""
+    )).fetchall()
+    exact_memories = {
+        (row["bot_id"], row["user_id"], normalize_memory_text(row["memory_text"])): row["id"]
+        for row in memories
+    }
+    approved = 0
+    for candidate in candidates:
+        key = (
+            candidate["bot_id"], candidate["user_id"],
+            normalize_memory_text(candidate["candidate_text"]),
+        )
+        if key in exact_memories:
+            await approve_memory_candidate(
+                db, candidate_id=candidate["id"], actor=AUTOMATIC_REPEAT_ACTOR,
+            )
+            approved += 1
+    return approved
+
+
+async def approve_memory_candidates(
+    db: aiosqlite.Connection, *, candidate_ids: list[int], actor: str = "operator",
+) -> int:
+    for candidate_id in candidate_ids:
+        await approve_memory_candidate(db, candidate_id=candidate_id, actor=actor)
+    return len(candidate_ids)
 
 
 async def list_memory_candidates(

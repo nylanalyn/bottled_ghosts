@@ -6,12 +6,15 @@ Memory extraction is an explicit per-Bottle option. After a Bottle handles an
 addressed message, a separate constrained LLM request may propose up to three
 categorized candidates. Valid candidates are stored as pending sediment tied
 to the source message and resolved user UUID. They are never used as approved
-memory until an operator reviews them.
+memory until an operator reviews them, except for an exact normalized repeat of
+an already approved, active memory. That repeat is attached as evidence by the
+runtime and recorded with the `automatic:exact-repeat` audit actor.
 
 ## Alternatives considered
 
 - Automatically approving high-confidence output was rejected because model
-  confidence is not evidence.
+  confidence is not evidence. A preview-first bulk command permits an operator
+  to approve a selected confidence/type/Bottle/user subset explicitly.
 - Extracting from every channel message was rejected because it adds cost and
   records information from conversations the Bottle did not handle.
 - Storing candidates in files was rejected because SQLite is canonical.

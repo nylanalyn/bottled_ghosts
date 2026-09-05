@@ -15,7 +15,9 @@ from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore
 from cellar.runtime import run_bottle, run_bottles
 from cellar.memory_store import (
     approve_memory_candidate,
+    approve_memory_candidates,
     attach_memory_candidate,
+    auto_approve_exact_repeats,
     edit_user_memory,
     list_memory_evidence,
     list_memory_candidates,
@@ -193,6 +195,33 @@ async def async_main(args: argparse.Namespace) -> None:
                 db, candidate_id=args.candidate_id, actor=args.actor
             )
             print(f"Approved candidate {args.candidate_id} as memory {memory_id}")
+        elif args.command == "sediment-bulk-approve":
+            if not 0 <= args.min_confidence <= 1:
+                raise ValueError("minimum confidence must be between 0 and 1")
+            candidates = [
+                candidate for candidate in await list_memory_candidates(db)
+                if candidate.confidence >= args.min_confidence
+                and (not args.memory_types or candidate.memory_type in args.memory_types)
+                and (args.bottle_id is None or candidate.bot_id == args.bottle_id)
+                and (args.user_id is None or candidate.user_id == args.user_id)
+            ]
+            if not args.apply:
+                for candidate in candidates:
+                    print(f"{candidate.id}\t{candidate.confidence:.2f}\t"
+                          f"{candidate.memory_type}\t{candidate.bottle_name}\t"
+                          f"{candidate.canonical_name}\t{candidate.candidate_text}")
+                print(f"{len(candidates)} candidate(s) selected; rerun with --apply to approve")
+            else:
+                count = await approve_memory_candidates(
+                    db, candidate_ids=[candidate.id for candidate in candidates],
+                    actor=args.actor,
+                )
+                print(f"Approved {count} candidate(s)")
+        elif args.command == "sediment-auto-approve-repeats":
+            count = await auto_approve_exact_repeats(
+                db, bot_id=args.bottle_id, user_id=args.user_id,
+            )
+            print(f"Automatically approved {count} exact repeat(s)")
         elif args.command == "sediment-reject":
             await reject_memory_candidate(
                 db, candidate_id=args.candidate_id, actor=args.actor
@@ -434,6 +463,22 @@ def main() -> None:
     sediment_approve = commands.add_parser("sediment-approve", help="approve a candidate")
     sediment_approve.add_argument("candidate_id", type=int)
     sediment_approve.add_argument("--actor", default="operator")
+    sediment_bulk_approve = commands.add_parser(
+        "sediment-bulk-approve", help="preview or approve filtered pending candidates"
+    )
+    sediment_bulk_approve.add_argument("--min-confidence", type=float, default=0.9)
+    sediment_bulk_approve.add_argument("--type", dest="memory_types", action="append",
+                                       choices=MEMORY_TYPES)
+    sediment_bulk_approve.add_argument("--bottle-id", type=int)
+    sediment_bulk_approve.add_argument("--user-id")
+    sediment_bulk_approve.add_argument("--apply", action="store_true")
+    sediment_bulk_approve.add_argument("--actor", default="operator")
+    sediment_repeats = commands.add_parser(
+        "sediment-auto-approve-repeats",
+        help="approve pending candidates that exactly repeat approved memories",
+    )
+    sediment_repeats.add_argument("--bottle-id", type=int)
+    sediment_repeats.add_argument("--user-id")
     sediment_reject = commands.add_parser("sediment-reject", help="reject a candidate")
     sediment_reject.add_argument("candidate_id", type=int)
     sediment_reject.add_argument("--actor", default="operator")

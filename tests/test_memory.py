@@ -14,6 +14,7 @@ from cellar.models import (
 )
 from cellar.memory_store import (
     approve_memory_candidate,
+    approve_memory_candidates,
     approved_memory_texts,
     edit_user_memory,
     list_all_user_memories,
@@ -267,6 +268,46 @@ async def test_pending_candidate_keeps_source_and_deduplicates(tmp_path) -> None
         with pytest.raises(aiosqlite.IntegrityError, match="append-only"):
             await db.execute("DELETE FROM audit_events")
         await db.rollback()
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_bulk_approval_approves_only_selected_candidates(tmp_path) -> None:
+    db = await open_database(tmp_path / "bulk.db")
+    try:
+        bottle_id = await create_bottle(
+            db, name="test", soul_prompt_path=tmp_path / "soul.md",
+            irc=IRCProfile(network="local", host="irc.example", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#test"]),
+            llm=LLMProfile(endpoint="http://localhost", model="test"),
+        )
+        user_id = await resolve_user(
+            db, network="local", identity=IncomingIRCMessage(
+                nick="alice", hostmask="u@h", account=None,
+                target="#test", body="I love cheese",
+            ),
+        )
+        for text, confidence in (("Likes cheese", 0.95), ("Likes tea", 0.7)):
+            message_id = await log_message(
+                db, IRCMessage(network="local", channel="#test", speaker="alice",
+                               body=text, bot_id=bottle_id, user_id=user_id),
+            )
+            await store_memory_candidates(
+                db, bot_id=bottle_id, user_id=user_id,
+                source_message_ids=[message_id], candidates=[ExtractedMemory(
+                    text=text, type="preference", confidence=confidence,
+                )],
+            )
+        candidate_ids = [
+            candidate.id for candidate in await list_memory_candidates(db)
+            if candidate.confidence >= 0.9
+        ]
+        assert await approve_memory_candidates(
+            db, candidate_ids=candidate_ids, actor="test-operator",
+        ) == 1
+        assert len(await list_user_memories(db, bot_id=bottle_id, user_id=user_id)) == 1
+        assert len(await list_memory_candidates(db)) == 1
     finally:
         await db.close()
 

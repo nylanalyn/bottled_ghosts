@@ -89,9 +89,10 @@ async def test_exact_repetition_becomes_more_evidence_not_another_memory(
             db, bot_id=bot_id, user_id=user_id,
             text="  ARIA is quartermaster of the Bullshittery Platoon! ",
         )
-        assert await approve_memory_candidate(
-            db, candidate_id=repeated, actor="tester",
-        ) == memory_id
+        row = await (await db.execute(
+            "SELECT status FROM memory_candidates WHERE id = ?", (repeated,)
+        )).fetchone()
+        assert row is not None and row["status"] == "approved"
 
         memories = await list_user_memories(
             db, bot_id=bot_id, user_id=user_id,
@@ -100,9 +101,12 @@ async def test_exact_repetition_becomes_more_evidence_not_another_memory(
         assert [memory.id for memory in memories] == [memory_id]
         assert [item.candidate_id for item in evidence] == [first, repeated]
         actions = await (await db.execute(
-            "SELECT action FROM audit_events ORDER BY id"
+            "SELECT action, actor FROM audit_events ORDER BY id"
         )).fetchall()
-        assert [row[0] for row in actions] == ["approve", "attach"]
+        assert [(row[0], row[1]) for row in actions] == [
+            ("approve", "tester"),
+            ("attach", "automatic:exact-repeat"),
+        ]
     finally:
         await db.close()
 

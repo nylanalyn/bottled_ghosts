@@ -293,3 +293,145 @@ async def test_admin_api_matches_legacy_contract(tmp_path) -> None:
             await asyncio.sleep(0)
     finally:
         await db.close()
+
+
+class _FakeRequest:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    async def json(self) -> dict:
+        return self._payload
+
+
+async def _run_command(module, context, command: str, args: str = "") -> list[str]:
+    from aiohttp import web
+    response = await module._command(context, _FakeRequest({"command": command, "args": args}))
+    assert isinstance(response, web.Response)
+    import json
+    return json.loads(response.text)["messages"]
+
+
+async def test_admin_dream_and_affinity_queries(tmp_path) -> None:
+    from cellar.identity import resolve_user
+    from cellar.models import IncomingIRCMessage
+
+    db = await open_database(tmp_path / "queries.db")
+    try:
+        bottle = await _bottle(db, tmp_path)
+        state = RuntimeState()
+        context = RuntimeContext(
+            db=db, bottle=bottle, database_lock=state.database_lock, state=state,
+            module_settings={"admin_api": {}},
+        )
+        module = AdminAPIModule()
+
+        # Empty state: friendly answers, not tracebacks.
+        assert await _run_command(module, context, "dreams") == ["No dreams recorded yet."]
+        assert await _run_command(module, context, "dream") == ["No dreams recorded yet."]
+        assert await _run_command(module, context, "affinity") == [
+            "No affinity readings yet; they build up as people talk "
+            "to this Bottle (affinity module)."
+        ]
+
+        # Two dreams on distinct days; the newer one has the longer text.
+        await db.execute(
+            """INSERT INTO summaries(bot_id, period_start, period_end, summary)
+               VALUES (?, '2026-09-04 00:00', '2026-09-05 00:00',
+                       'Older dream about the telescope.')""",
+            (bottle.id,),
+        )
+        await db.execute(
+            """INSERT INTO summaries(bot_id, period_start, period_end, summary)
+               VALUES (?, '2026-09-05 00:00', '2026-09-06 00:00',
+                       'Dreamed about the fishing contest.')""",
+            (bottle.id,),
+        )
+        await db.commit()
+
+        listed = await _run_command(module, context, "dreams")
+        assert listed == [
+            "Dreams recorded (newest first):",
+            "#2 2026-09-05 through 2026-09-06",
+            "#1 2026-09-04 through 2026-09-05",
+        ]
+        latest = await _run_command(module, context, "dream")
+        assert latest[0].startswith("Dream #2 (2026-09-05 through 2026-09-06):")
+        assert "fishing contest" in latest[0]
+        dated = await _run_command(module, context, "dream", "2026-09-05")
+        assert "telescope" in dated[0]
+        missing = await _run_command(module, context, "dream", "2020-01-01")
+        assert "No dream recorded for 2020-01-01" in missing[0]
+        bad = await _run_command(module, context, "dream", "soon")
+        assert "Use a date like" in bad[0]
+
+        # Affinity: two scored people plus one known user with no score.
+        alice_id = await resolve_user(
+            db, network="test",
+            identity=IncomingIRCMessage(
+                nick="alice", hostmask="a@h", account="alice",
+                target="#test", body="hello",
+            ),
+        )
+        bob_id = await resolve_user(
+            db, network="test",
+            identity=IncomingIRCMessage(
+                nick="bob", hostmask="b@h", account="bob",
+                target="#test", body="hello",
+            ),
+        )
+        await resolve_user(
+            db, network="test",
+            identity=IncomingIRCMessage(
+                nick="carol", hostmask="c@h", account="carol",
+                target="#test", body="hello",
+            ),
+        )
+        await db.execute(
+            "INSERT INTO user_affinity(bot_id, user_id, warmth) VALUES (?, ?, 0.62)",
+            (bottle.id, bob_id),
+        )
+        await db.execute(
+            "INSERT INTO user_affinity(bot_id, user_id, warmth) VALUES (?, ?, -0.31)",
+            (bottle.id, alice_id),
+        )
+        await db.commit()
+
+        listing = await _run_command(module, context, "affinity")
+        assert listing[0] == "Affinity (strongest first):"
+        assert listing[1] == (
+            "bob: +0.62 — someone you are genuinely glad to see"
+        )
+        assert listing[2] == (
+            "alice: -0.31 — someone who has been wearing on you a little"
+        )
+
+        alice = await _run_command(module, context, "affinity", "ALICE")
+        assert alice[0].startswith(
+            "alice: -0.31 — someone who has been wearing on you a little"
+        )
+        assert "(as of " in alice[0]
+        # A real user with no score reports neutral instead of unknown.
+        carol = await _run_command(module, context, "affinity", "carol")
+        assert carol == ["carol: neutral — no scored interactions yet."]
+        stranger = await _run_command(module, context, "affinity", "mallory")
+        assert stranger == ["No one called 'mallory' is on record for test."]
+    finally:
+        await db.close()
+
+
+async def test_admin_help_mentions_new_queries(tmp_path) -> None:
+    db = await open_database(tmp_path / "help.db")
+    try:
+        bottle = await _bottle(db, tmp_path)
+        state = RuntimeState()
+        context = RuntimeContext(
+            db=db, bottle=bottle, database_lock=state.database_lock, state=state,
+            module_settings={"admin_api": {}},
+        )
+        module = AdminAPIModule()
+        help_text = (await _run_command(module, context, "help"))[0]
+        assert "dreams" in help_text
+        assert "dream [YYYY-MM-DD]" in help_text
+        assert "affinity [nick]" in help_text
+    finally:
+        await db.close()

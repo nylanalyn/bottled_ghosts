@@ -1,6 +1,7 @@
 import hmac
 import ipaddress
 import logging
+from datetime import date
 from typing import Any
 
 from aiohttp import web
@@ -19,6 +20,7 @@ from cellar.irc import mentions_any_nick
 from cellar.llm import complete
 from cellar.module_api import ModuleContext, NightlyContext, RuntimeContext
 from cellar.storage import recent_channel_message_records
+from modules.affinity import warmth_label
 from modules.moods import mood_status_line
 
 logger = logging.getLogger(__name__)
@@ -131,7 +133,10 @@ class Module:
                     "off - stop public model responses\non - resume public model responses\n"
                     "quiet [on|off] - respond only to direct pings, no automatic speech\n"
                     "away <message> - set an availability note\nback - clear the availability note\n"
-                    "summarize [#channel] - summarize the last 50 room lines and report watched-nick pings"
+                    "summarize [#channel] - summarize the last 50 room lines and report watched-nick pings\n"
+                    "dreams - list the dates that have recorded dreams\n"
+                    "dream [YYYY-MM-DD] - show that day's dream, or the latest one\n"
+                    "affinity [nick] - list warmth scores, or how this Bottle feels about one person"
                 ]
             elif command == "status":
                 enabled = await response_enabled(ctx.db, bottle_id=ctx.bottle.id)
@@ -161,6 +166,12 @@ class Module:
                     messages.append(mood_block)
                 away = await away_status(ctx.db, bottle_id=ctx.bottle.id)
                 messages.append(f"away: {away or 'no'}")
+            elif command == "dreams":
+                messages = await self._dreams_list(ctx)
+            elif command == "dream":
+                messages = await self._dream(ctx, argument)
+            elif command == "affinity":
+                messages = await self._affinity(ctx, argument)
             elif command == "model":
                 messages = [f"model: {ctx.bottle.llm.model}"]
             elif command in {"off", "on"}:
@@ -269,6 +280,102 @@ class Module:
             messages.append("Watched-nick pings (verbatim):")
             messages.extend(pings)
         return messages
+
+    async def _dreams_list(
+        self, ctx: RuntimeContext, limit: int = 12,
+    ) -> list[str]:
+        rows = list(await (await ctx.db.execute(
+            """SELECT id, period_start, period_end FROM summaries
+               WHERE bot_id = ? ORDER BY id DESC LIMIT ?""",
+            (ctx.bottle.id, limit),
+        )).fetchall())
+        if not rows:
+            return ["No dreams recorded yet."]
+        return ["Dreams recorded (newest first):"] + [
+            f"#{row['id']} {str(row['period_start'])[:10]} through "
+            f"{str(row['period_end'])[:10]}"
+            for row in rows
+        ]
+
+    async def _dream(self, ctx: RuntimeContext, argument: str) -> list[str]:
+        requested = argument.strip()
+        if requested:
+            try:
+                requested_day = date.fromisoformat(requested)
+            except ValueError:
+                return ["Use a date like dream 2026-09-05, or dream for the latest."]
+            row = await (await ctx.db.execute(
+                """SELECT id, period_start, period_end, summary FROM summaries
+                   WHERE bot_id = ? AND date(period_end) = date(?)
+                   ORDER BY id DESC LIMIT 1""",
+                (ctx.bottle.id, requested_day.isoformat()),
+            )).fetchone()
+            if row is None:
+                return [
+                    f"No dream recorded for {requested_day.isoformat()}; "
+                    "try dreams for the dates that have one."
+                ]
+        else:
+            row = await (await ctx.db.execute(
+                """SELECT id, period_start, period_end, summary FROM summaries
+                   WHERE bot_id = ? ORDER BY id DESC LIMIT 1""",
+                (ctx.bottle.id,),
+            )).fetchone()
+            if row is None:
+                return ["No dreams recorded yet."]
+        header = (
+            f"Dream #{row['id']} ({str(row['period_start'])[:10]} through "
+            f"{str(row['period_end'])[:10]}):"
+        )
+        return [f"{header}\n{str(row['summary']).strip()[:1800]}"]
+
+    async def _affinity(self, ctx: RuntimeContext, argument: str) -> list[str]:
+        requested = argument.strip()
+        if not requested:
+            rows = list(await (await ctx.db.execute(
+                """SELECT u.canonical_name, a.warmth FROM user_affinity a
+                   JOIN users u ON u.id = a.user_id
+                   WHERE a.bot_id = ?
+                   ORDER BY ABS(a.warmth) DESC, u.canonical_name COLLATE NOCASE
+                   LIMIT 15""",
+                (ctx.bottle.id,),
+            )).fetchall())
+            if not rows:
+                return [
+                    "No affinity readings yet; they build up as people talk "
+                    "to this Bottle (affinity module)."
+                ]
+            return ["Affinity (strongest first):"] + [
+                f"{row['canonical_name']}: {float(row['warmth']):+.2f} — "
+                f"{warmth_label(float(row['warmth']))}"
+                for row in rows
+            ]
+        row = await (await ctx.db.execute(
+            """SELECT u.canonical_name, a.warmth, a.updated_at
+               FROM users u
+               JOIN user_identities i
+                 ON i.user_id = u.id AND i.network = ?
+               LEFT JOIN user_affinity a
+                 ON a.user_id = u.id AND a.bot_id = ?
+               WHERE i.nick = ? COLLATE NOCASE
+                  OR u.canonical_name = ? COLLATE NOCASE
+               ORDER BY i.last_seen DESC LIMIT 1""",
+            (ctx.bottle.irc.network, ctx.bottle.id, requested, requested),
+        )).fetchone()
+        if row is None:
+            return [
+                f"No one called '{requested}' is on record for "
+                f"{ctx.bottle.irc.network}."
+            ]
+        if row["warmth"] is None:
+            return [
+                f"{row['canonical_name']}: neutral — no scored interactions yet."
+            ]
+        return [
+            f"{row['canonical_name']}: {float(row['warmth']):+.2f} — "
+            f"{warmth_label(float(row['warmth']))} "
+            f"(as of {str(row['updated_at'])[:16]})"
+        ]
 
     @staticmethod
     def _watched_nicks(settings: dict[str, dict[str, object]]) -> tuple[str, ...]:

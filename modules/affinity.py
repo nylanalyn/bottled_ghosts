@@ -61,7 +61,8 @@ def warmed(current: float, settings: Settings) -> float:
     return _clamp(current + gain + random.gauss(0.0, _WARM_JITTER))
 
 
-def _label(warmth: float, threshold: float) -> str:
+def warmth_label(warmth: float, threshold: float = 0.25) -> str:
+    """Human wording for a warmth score. Shared with the admin API."""
     if warmth >= 0.55:
         return "someone you are genuinely glad to see"
     if warmth >= threshold:
@@ -112,7 +113,7 @@ async def current_warmth(
 
 def _format_note(nick: str, warmth: float, threshold: float) -> str:
     return (
-        f"Standing impression of {nick}: {_label(warmth, threshold)} "
+        f"Standing impression of {nick}: {warmth_label(warmth, threshold)} "
         f"(warmth {warmth:+.2f}). Let this color how warmly you engage them, "
         "subtly. Never announce, explain, or make a topic of it."
     )

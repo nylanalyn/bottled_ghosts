@@ -34,12 +34,23 @@ from cellar.module_api import (
 )
 from cellar.module_loader import load_modules
 from cellar.prompt import build_prompt, read_soul
-from cellar.safety import Cooldown, sanitize
+from cellar.safety import Cooldown, sanitize, typing_pause
 from cellar.storage import log_message, open_database, recent_messages, search_messages
 
 logger = logging.getLogger(__name__)
 MOOD_BREAK_SECONDS = 30 * 60
 MOOD_BREAK_FALLBACK = "I'm too annoyed to be good company. I need thirty minutes to breathe."
+ABSENCE_NOTE_MIN_MINUTES = 10
+
+
+def absence_gap_text(minutes: int) -> str:
+    """Human-scale wording for an offline gap."""
+    if minutes < 120:
+        return f"{minutes} minutes"
+    hours = round(minutes / 60)
+    if hours < 48:
+        return f"{hours} hours"
+    return f"{round(hours / 24)} days"
 
 
 async def _active_room_breaks(
@@ -129,6 +140,42 @@ async def _finish_room_break(
     )
     await db.commit()
     return True
+
+
+async def log_absence_notes(
+    db: aiosqlite.Connection, *, bottle: Bottle, network: str, channels: list[str],
+    nick: str, database_lock: asyncio.Lock,
+) -> None:
+    """Record each channel's offline gap so the Bottle knows it was away.
+
+    Mirrors the kick and mood-break system events: the runtime writes an
+    inspectable line into the channel history, and the character decides
+    whether and how to mention coming back.
+    """
+    for channel in channels:
+        row = await (await db.execute(
+            """SELECT CAST((julianday('now') - julianday(MAX(timestamp))) * 1440
+                      AS INTEGER)
+               FROM messages WHERE bot_id = ? AND network = ? AND channel = ?""",
+            (bottle.id, network, channel),
+        )).fetchone()
+        minutes = int(row[0]) if row is not None and row[0] is not None else 0
+        if minutes < ABSENCE_NOTE_MIN_MINUTES:
+            continue
+        async with database_lock:
+            await log_message(
+                db, IRCMessage(
+                    network=network, channel=channel,
+                    speaker="IRC runtime",
+                    body=(f"System event: {nick} rejoined after being "
+                          f"offline for about {absence_gap_text(minutes)}."),
+                    bot_id=bottle.id,
+                ),
+            )
+        logger.info(
+            "Bottle %d (%s) noted a %d minute absence in %s",
+            bottle.id, bottle.name, minutes, channel,
+        )
 
 
 @dataclass(frozen=True)
@@ -244,6 +291,9 @@ async def run_bottle_once(
         if not lines and module_context.response is not None:
             logger.warning("LLM response was empty after sanitization")
         for line in lines:
+            # Read-then-type pacing before the flood-protection cooldown so
+            # replies arrive at a human rhythm rather than instantly.
+            await typing_pause(line)
             await cooldown.wait()
             action_body = (
                 line[4:].strip()
@@ -478,6 +528,11 @@ async def run_bottle_once(
         channel for channel in bottle.irc.channels
         if irc_casefold(channel) not in stepping_away_channels
     ]
+    await log_absence_notes(
+        db, bottle=bottle, network=bottle.irc.network,
+        channels=client.join_channels, nick=active_nick(),
+        database_lock=database_lock,
+    )
 
     async def return_from_break(channel: str, rejoin_at: int) -> None:
         await asyncio.sleep(max(0.0, rejoin_at - time.time()))

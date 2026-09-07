@@ -1,4 +1,5 @@
 import asyncio
+import random
 import re
 import time
 
@@ -6,6 +7,29 @@ from cellar.irc import truncate_utf8
 
 THINK_RE = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
 TAG_RE = re.compile(r"</?think\b[^>]*>", re.IGNORECASE)
+
+# Length-proportional send pacing so replies do not land instantly after the
+# listening window closes. Zero cap disables the pause; the test suite pins it
+# to zero via an autouse fixture so runtime tests stay instant.
+TYPING_BASE_SECONDS = 0.6
+TYPING_CHARS_PER_SECOND = 45.0
+TYPING_CAP_SECONDS = 3.0
+TYPING_JITTER = 0.25
+
+
+def typing_seconds(text: str) -> float:
+    """Seconds a reply plausibly took to read and type. Zero when disabled."""
+    estimate = min(
+        TYPING_BASE_SECONDS + len(text) / TYPING_CHARS_PER_SECOND,
+        TYPING_CAP_SECONDS,
+    )
+    return max(0.0, estimate) * random.uniform(1.0 - TYPING_JITTER, 1.0 + TYPING_JITTER)
+
+
+async def typing_pause(text: str) -> None:
+    seconds = typing_seconds(text)
+    if seconds > 0:
+        await asyncio.sleep(seconds)
 
 
 def strip_private_reasoning(text: str) -> str:

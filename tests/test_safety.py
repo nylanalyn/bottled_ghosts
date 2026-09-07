@@ -45,3 +45,19 @@ def test_strip_private_reasoning_preserves_summary_layout() -> None:
 def test_strip_private_reasoning_drops_unclosed_thought_and_everything_after_it() -> None:
     assert strip_private_reasoning("Public answer\n<think>private reasoning") == "Public answer"
     assert strip_private_reasoning("<think>private reasoning") == ""
+
+
+def test_typing_pace_is_disabled_by_zero_cap(monkeypatch) -> None:
+    from cellar import safety
+    monkeypatch.setattr(safety, "TYPING_CAP_SECONDS", 0.0)
+    assert safety.typing_seconds("hello") == 0.0
+
+
+def test_typing_pace_scales_with_length_and_caps(monkeypatch) -> None:
+    from cellar import safety
+    monkeypatch.setattr(safety, "TYPING_CAP_SECONDS", 3.0)
+    monkeypatch.setattr(safety, "TYPING_JITTER", 0.0)
+    short = safety.typing_seconds("hi")
+    long = safety.typing_seconds("word " * 100)
+    assert 0.0 < short < long
+    assert long == 3.0

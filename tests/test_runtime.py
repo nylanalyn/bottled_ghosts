@@ -740,3 +740,54 @@ async def test_graceful_shutdown_cancels_main_task_on_sigterm(tmp_path) -> None:
     finally:
         cli_mod.async_main = original_async_main
         cli_mod.open_database = original_open_database
+
+
+def test_absence_gap_text_reads_like_a_person() -> None:
+    from cellar.runtime import absence_gap_text
+    assert absence_gap_text(10) == "10 minutes"
+    assert absence_gap_text(90) == "90 minutes"
+    assert absence_gap_text(200) == "3 hours"
+    assert absence_gap_text(3000) == "2 days"
+
+
+@pytest.mark.asyncio
+async def test_absence_note_logged_only_for_long_gaps(tmp_path) -> None:
+    from cellar.runtime import log_absence_notes
+    database = tmp_path / "absence.db"
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(database)
+    try:
+        bottle_id = await create_bottle(
+            db, name="test", soul_prompt_path=soul,
+            irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                           username="ghost", realname="Ghost",
+                           channels=["#gone", "#recent"]),
+            llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+        )
+        bottle = await load_bottle(db, bottle_id)
+        await db.execute(
+            """INSERT INTO messages(network, channel, speaker, body, bot_id, timestamp)
+               VALUES ('test', '#gone', 'carol', 'before the outage', ?,
+                       datetime('now', '-3 hours'))""",
+            (bottle_id,),
+        )
+        await db.execute(
+            """INSERT INTO messages(network, channel, speaker, body, bot_id, timestamp)
+               VALUES ('test', '#recent', 'carol', 'just now', ?,
+                       datetime('now'))""",
+            (bottle_id,),
+        )
+        await db.commit()
+        await log_absence_notes(
+            db, bottle=bottle, network="test", channels=["#gone", "#recent"],
+            nick="ghost", database_lock=asyncio.Lock(),
+        )
+        rows = list(await (await db.execute(
+            "SELECT channel, body FROM messages WHERE speaker = 'IRC runtime'"
+        )).fetchall())
+        assert [(row["channel"], row["body"]) for row in rows] == [
+            ("#gone", "System event: ghost rejoined after being offline for about 3 hours."),
+        ]
+    finally:
+        await db.close()

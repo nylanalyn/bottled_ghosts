@@ -102,7 +102,7 @@ async def auto_approve_exact_repeats(
         params.append(user_id)
     where = " AND ".join(filters)
     candidates = await (await db.execute(
-        f"SELECT id, bot_id, user_id, candidate_text FROM memory_candidates WHERE {where}",
+        f"SELECT id, bot_id, user_id, candidate_text FROM memory_candidates AS c WHERE {where}",
         params,
     )).fetchall()
     memories = await (await db.execute(

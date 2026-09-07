@@ -934,6 +934,41 @@ async def migration_032(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_033(db: aiosqlite.Connection) -> None:
+    """Add pending follow-up threads carried over from nightly dreams."""
+    await db.executescript(
+        """
+        CREATE TABLE dream_followups (
+            id INTEGER PRIMARY KEY,
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            summary_id INTEGER REFERENCES summaries(id) ON DELETE SET NULL,
+            followup_text TEXT NOT NULL CHECK (length(followup_text) BETWEEN 1 AND 300),
+            times_shown INTEGER NOT NULL DEFAULT 0 CHECK (times_shown >= 0),
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'asked')),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL
+        );
+        CREATE INDEX dream_followups_due_idx
+            ON dream_followups(bot_id, status, expires_at);
+        """
+    )
+
+
+async def migration_034(db: aiosqlite.Connection) -> None:
+    """Add per-user warmth drift for the optional affinity module."""
+    await db.executescript(
+        """
+        CREATE TABLE user_affinity (
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            warmth REAL NOT NULL DEFAULT 0.0 CHECK (warmth BETWEEN -1.0 AND 1.0),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (bot_id, user_id)
+        );
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -955,6 +990,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_030,
     migration_031,
     migration_032,
+    migration_033,
+    migration_034,
 )
 
 

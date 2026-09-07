@@ -152,6 +152,14 @@ Stores the optional moods module's global per-Bottle state. Columns: `bot_id INT
 
 Stores runtime-enforced, temporary mood breaks per Bottle and IRC channel. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `started_at INTEGER NOT NULL`, `rejoin_at INTEGER NOT NULL`, `baseline_valence REAL NOT NULL`, `baseline_irritability REAL NOT NULL`, `active INTEGER NOT NULL DEFAULT 1`, `reset_at INTEGER`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `mood_room_breaks_due_idx(bot_id, network, active, rejoin_at)`. When the moods module reaches irritability `1.0`, the runtime records a 30-minute active break before issuing `PART`; it skips that channel on reconnect. At the due time it resets global mood to the recorded profile baselines with zero interaction heat, marks the break inactive, and sends `JOIN`.
 
+## dream_followups
+
+Stores at most a few pending "unfinished threads" the optional followups module extracted from nightly dream summaries. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `summary_id INTEGER` (nullable link to the originating `summaries` row, set NULL if that summary is deleted), `followup_text TEXT NOT NULL` (CHECK length 1-300), `times_shown INTEGER NOT NULL DEFAULT 0` (CHECK nonnegative; counts prompt inclusions), `status TEXT NOT NULL DEFAULT 'pending'` (CHECK `pending` or `asked`), `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `expires_at TEXT NOT NULL`. Foreign keys: `bot_id` references `bots(id)` with cascading deletion; `summary_id` references `summaries(id)` with `ON DELETE SET NULL`. Index: `dream_followups_due_idx(bot_id, status, expires_at)`. The module's `nightly` hook stores one thread per dream (pruning the oldest pending rows beyond the configured cap); `before_prompt` offers the oldest unexpired pending thread to the model and increments `times_shown`, marking it `asked` once the configured prompt budget is spent.
+
+## user_affinity
+
+Stores the optional affinity module's per-person warmth score. Columns: `bot_id INTEGER NOT NULL`, `user_id TEXT NOT NULL`, `warmth REAL NOT NULL DEFAULT 0.0` (CHECK between -1.0 and 1.0), `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, user_id)`. Foreign keys: `bot_id` references `bots(id)` and `user_id` references `users(id)`, both with cascading deletion. Updates happen lazily on addressed messages: elapsed time decays warmth toward neutral on an exponential schedule, then a gain scaled by remaining headroom plus small jitter is applied. `before_prompt` surfaces the score as a tone note only when its magnitude crosses the configured threshold.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -186,3 +194,5 @@ Stores runtime-enforced, temporary mood breaks per Bottle and IRC channel. Colum
 - 030: Scope sediment and approved memories to their owning Bottle, backfilling ownership from source-message provenance.
 - 031: Separate canonical memories from their many evidence candidates, add exact FTS retrieval, archived merge redirects, persistent consolidation proposals, and expanded append-only audit actions.
 - 032: Add per-Bottle quiet mode column; stay online and respond to direct pings while suppressing ambient/automatic speech.
+- 033: Add pending dream follow-up threads with prompt-inclusion budget and expiry for the optional followups module.
+- 034: Add per-user warmth scores for the optional affinity module.

@@ -13,7 +13,9 @@ from modules.fishing import Module as FishingModule
 from modules.ignore import Module as IgnoreModule
 from modules.moods import Module as MoodsModule
 from modules.admin_api import Module as AdminAPIModule
+from modules.affinity import Module as AffinityModule
 from modules.emergency_alert import Module as EmergencyAlertModule
+from modules.followups import Module as FollowupsModule
 from modules.reflection import Module as ReflectionModule
 
 logger = logging.getLogger(__name__)
@@ -22,12 +24,14 @@ ModuleFactory = Callable[[], ModuleContract]
 REGISTRY: tuple[tuple[str, ModuleFactory], ...] = (
     ("ignore", IgnoreModule),
     ("admin_api", AdminAPIModule),
+    ("affinity", AffinityModule),
     ("ambient_chat", AmbientChatModule),
     ("anti_repeat", AntiRepeatModule),
     ("bot_lives", BotLivesModule),
     ("channel_context", ChannelContextModule),
     ("emergency_alert", EmergencyAlertModule),
     ("fishing", FishingModule),
+    ("followups", FollowupsModule),
     ("moods", MoodsModule),
     ("reflection", ReflectionModule),
 )

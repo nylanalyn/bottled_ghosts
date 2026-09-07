@@ -4,9 +4,11 @@ import time
 import pytest
 
 from cellar.ignore_store import add_ignore_rule
+from cellar.identity import resolve_user
 from cellar.models import (
     Bottle,
     ExtractedMemory,
+    IRCMessage,
     IRCProfile,
     IncomingIRCMessage,
     LLMProfile,
@@ -15,7 +17,7 @@ from cellar.module_store import set_module_enabled, set_module_settings
 from cellar.module_api import ModuleRunner
 from cellar.runtime import run_bottle, run_bottle_once, run_bottles
 from cellar.irc import IRCAuthenticationError, IRCKickEvent, IRCKickedError
-from cellar.storage import create_bottle, load_bottle, open_database
+from cellar.storage import create_bottle, load_bottle, log_message, open_database
 
 
 @pytest.mark.asyncio
@@ -789,5 +791,130 @@ async def test_absence_note_logged_only_for_long_gaps(tmp_path) -> None:
         assert [(row["channel"], row["body"]) for row in rows] == [
             ("#gone", "System event: ghost rejoined after being offline for about 3 hours."),
         ]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_pings_from_several_people_share_one_reply(
+    monkeypatch, tmp_path,
+) -> None:
+    database = tmp_path / "grouped.db"
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(database)
+    bottle_id = await create_bottle(
+        db, name="test", soul_prompt_path=soul,
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost", channels=["#test"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+        cooldown_seconds=0, listen_window_seconds=0.01, extract_memories=True,
+    )
+    bottle = await load_bottle(db, bottle_id)
+    # Give bob an approved memory so grouped prompts label memories per person.
+    from cellar.memory_store import (
+        approve_memory_candidate,
+        store_memory_candidates,
+    )
+    bob_id = await resolve_user(
+        db, network="test",
+        identity=IncomingIRCMessage(
+            nick="bob", hostmask="b@host", account="bob",
+            target="#test", body="hello",
+        ),
+    )
+    message_id = await log_message(
+        db, IRCMessage(network="test", channel="#test", speaker="bob",
+                       body="seed", bot_id=bottle.id, user_id=bob_id),
+    )
+    candidates = await store_memory_candidates(
+        db, bot_id=bottle.id, user_id=bob_id, source_message_ids=[message_id],
+        candidates=[ExtractedMemory(
+            text="Bob is building a canoe", type="project", confidence=0.9,
+        )],
+    )
+    assert candidates == 1
+    candidate_row = await (await db.execute(
+        "SELECT MAX(id) FROM memory_candidates"
+    )).fetchone()
+    assert candidate_row is not None
+    await approve_memory_candidate(db, candidate_id=int(candidate_row[0]), actor="tester")
+
+    prompts: list[list[dict[str, str]]] = []
+    extractions: list[tuple[str, str]] = []
+    sent: list[tuple[str, str]] = []
+
+    class FakeModules:
+        async def on_message(self, _context) -> None:
+            return None
+
+        async def before_prompt(self, _context) -> None:
+            return None
+
+        async def before_generation(self, _context) -> None:
+            return None
+
+        async def after_response(self, _context) -> None:
+            return None
+
+    class FakeIRCClient:
+        def __init__(self, _profile, handler) -> None:
+            self.handler = handler
+
+        async def run(self) -> None:
+            for nick, account, body in (
+                ("bob", "bob", "ghost: my canoe leaked"),
+                ("carol", "carol", "ghost: is the game on tonight?"),
+                ("alice", "alice", "ghost: does anyone have a pump?"),
+            ):
+                await self.handler(IncomingIRCMessage(
+                    nick=nick, hostmask=f"{nick}@host", account=account,
+                    target="#test", body=body,
+                ))
+            await asyncio.sleep(0.03)
+
+        async def send_message(self, target: str, body: str) -> None:
+            sent.append((target, body))
+
+        async def send_action(self, target: str, body: str) -> None:
+            sent.append((target, body))
+
+    async def fake_load_modules(_db, *, bottle_id: int):
+        assert bottle_id == bottle.id
+        return FakeModules()
+
+    async def fake_complete(_profile, prompt: list[dict[str, str]]) -> str:
+        prompts.append(prompt)
+        return "one reply for everyone"
+
+    async def fake_extract(
+        _profile, *, speaker: str, body: str, bot_names: tuple[str, ...],
+    ):
+        extractions.append((speaker, body))
+        return []
+
+    monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+    monkeypatch.setattr("cellar.runtime.load_modules", fake_load_modules)
+    monkeypatch.setattr("cellar.runtime.complete", fake_complete)
+    monkeypatch.setattr("cellar.runtime.extract_candidates", fake_extract)
+
+    try:
+        await run_bottle_once(db, bottle)
+        # Three pings, one activation, one reply.
+        assert len(prompts) == 1
+        assert sent == [("#test", "one reply for everyone")]
+        content = prompts[0][-1]["content"]
+        assert "Current unread messages from bob, carol, alice" in content
+        assert "Reply once, to the burst as a whole" in content
+        assert "About bob: project: Bob is building a canoe" in content
+        assert "ghost: my canoe leaked" in content
+        assert "ghost: is the game on tonight?" in content
+        assert "ghost: does anyone have a pump?" in content
+        # Memory extraction runs once per person with only their own lines.
+        assert sorted(extractions) == sorted([
+            ("bob", "ghost: my canoe leaked"),
+            ("carol", "ghost: is the game on tonight?"),
+            ("alice", "ghost: does anyone have a pump?"),
+        ])
     finally:
         await db.close()

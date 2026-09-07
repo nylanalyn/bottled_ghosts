@@ -238,12 +238,25 @@ async def run_bottle_once(
                 db, bot_id=bottle.id, network=bottle.irc.network, channel=channel,
                 text=body, exclude_message_ids=message_ids,
             )
-            memories = (
-                await approved_memory_texts(
-                    db, bot_id=bottle.id, user_id=user_id, query_text=body,
+            # Grouped windows can carry lines from several people. Memories are
+            # fetched per person and labeled, so nobody else's facts bleed into
+            # the wrong name.
+            grouped_users = len({item.user_id for item in items}) > 1
+            memories: list[str] = []
+            seen_user_ids: set[str] = set()
+            for item in items:
+                if item.user_id in seen_user_ids or item.identity_confidence < 0.8:
+                    continue
+                seen_user_ids.add(item.user_id)
+                texts = await approved_memory_texts(
+                    db, bot_id=bottle.id, user_id=item.user_id, query_text=body,
                 )
-                if latest.identity_confidence >= 0.8 else []
-            )
+                if grouped_users:
+                    memories.extend(
+                        f"About {item.message.nick}: {text}" for text in texts
+                    )
+                else:
+                    memories.extend(texts)
             dreams = await recent_dream_texts(db, bot_id=bottle.id)
             availability = await away_status(db, bottle_id=bottle.id)
             if availability is not None:
@@ -264,8 +277,9 @@ async def run_bottle_once(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,
             dreams=dreams, relevant=relevant, history=history, speaker=speaker, body=body,
             bot_nicks=(active_nick(),),
-            addressed=latest.addressed,
+            addressed=any(item.addressed for item in items),
             local_time=local_datetime_context(bottle.timezone),
+            current_speakers=tuple(dict.fromkeys(item.message.nick for item in items)),
         )
         module_context.generation_prompt = prompt
         await modules.before_generation(module_context)
@@ -312,17 +326,30 @@ async def run_bottle_once(
         logger.info("sent %d reply line(s) to %s", len(lines), reply_target)
         if bottle.extract_memories and replies_enabled:
             try:
-                candidates = await extract_candidates(
-                    bottle.llm, speaker=speaker, body=body,
-                    bot_names=(active_nick(), *bottle.address_names),
-                )
-                async with database_lock:
-                    inserted = await store_memory_candidates(
-                        db, bot_id=bottle.id, user_id=user_id,
-                        source_message_ids=message_ids,
-                        candidates=candidates,
+                # A grouped window carries lines from several people; extract
+                # per person so facts are attributed to the right identity.
+                by_user: dict[str, list[WindowMessage]] = {}
+                for item in items:
+                    by_user.setdefault(item.user_id, []).append(item)
+                for group_user_id, group_items in by_user.items():
+                    candidates = await extract_candidates(
+                        bottle.llm,
+                        speaker=group_items[-1].message.nick,
+                        body="\n".join(item.message.body for item in group_items),
+                        bot_names=(active_nick(), *bottle.address_names),
                     )
-                logger.info("stored %d pending memory candidate(s) for %s", inserted, speaker)
+                    async with database_lock:
+                        inserted = await store_memory_candidates(
+                            db, bot_id=bottle.id, user_id=group_user_id,
+                            source_message_ids=[
+                                item.message_id for item in group_items
+                            ],
+                            candidates=candidates,
+                        )
+                    logger.info(
+                        "stored %d pending memory candidate(s) for %s",
+                        inserted, group_items[-1].message.nick,
+                    )
             except Exception:
                 logger.exception("memory extraction failed for message %d", latest.message_id)
 
@@ -445,7 +472,11 @@ async def run_bottle_once(
             )
         if ignore_action == "no_response":
             return
-        key = (irc_casefold(conversation), user_id)
+        personal_key = (irc_casefold(conversation), user_id)
+        # Addressed pings share one conversation-wide window so several people
+        # pinging the Bottle inside the listening window produce one reply,
+        # not one reply per ping. Ambient lines keep per-speaker windows.
+        room_key: tuple[str, str] = ("addressed", irc_casefold(conversation))
         address_names = (active_nick(), *bottle.address_names)
         addressed = direct_message or mentions_any_nick(message.body, address_names)
         if quiet_mode:
@@ -457,9 +488,20 @@ async def run_bottle_once(
         elif module_context.suppress_automatic_response:
             should_respond = False
         else:
-            should_respond = windows.contains(key) or addressed
+            should_respond = (
+                windows.contains(personal_key)
+                or windows.contains(room_key)
+                or addressed
+            )
         should_monitor = not replies_enabled and module_context.monitor_when_silent
         if (replies_enabled and should_respond) or should_monitor:
+            # Ambient lines arriving while a reply window is open ride along
+            # as context for that single upcoming reply.
+            key = (
+                room_key
+                if addressed or windows.contains(room_key)
+                else personal_key
+            )
             windows.add(
                 key, WindowMessage(
                     message=message, user_id=user_id, message_id=message_id,

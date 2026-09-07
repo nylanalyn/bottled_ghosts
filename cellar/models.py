@@ -8,6 +8,19 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MemoryType = Literal["preference", "project", "relationship", "identity", "temporary_state"]
 
+# RFC-style nickname: first character must be a letter or one of the IRC
+# "special" characters; digits and hyphens are only legal after the first.
+IRC_NICK_PATTERN = re.compile(r"^[A-Za-z\-\[\]\\`_^{|}~][A-Za-z0-9\-\[\]\\`_^{|}~]*$")
+# Channel entries become single JOIN parameters, so no spaces (parameter
+# separator), commas (multi-channel JOIN), or line breaks (frame injection).
+IRC_CHANNEL_PATTERN = re.compile(r"^[#+&][^ \x07,\r\n]+$")
+
+
+def _rejects_line_breaks(value: str, label: str) -> str:
+    if "\r" in value or "\n" in value:
+        raise ValueError(f"{label} must be a single line")
+    return value
+
 
 class IRCProfile(BaseModel):
     network: str
@@ -38,11 +51,34 @@ class IRCProfile(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_irc_connection_fields(self) -> "IRCProfile":
+        """Reject config values that could forge extra IRC commands.
+
+        NICK, USER, PASS, and JOIN interpolate straight into raw protocol
+        lines, so each field must hold to the grammar of its position.
+        """
+        if not IRC_NICK_PATTERN.fullmatch(self.nick):
+            raise ValueError("IRC nick must use valid IRC nickname characters")
+        username = self.username.strip()
+        if not username or " " in username:
+            raise ValueError("IRC username must be non-empty with no spaces")
+        _rejects_line_breaks(username, "IRC username")
+        _rejects_line_breaks(self.realname, "IRC real name")
+        if self.password is not None:
+            _rejects_line_breaks(self.password, "IRC server password")
+        for channel in self.channels:
+            if not IRC_CHANNEL_PATTERN.fullmatch(channel):
+                raise ValueError(
+                    "IRC channels must start with #, &, or + and contain "
+                    "no spaces, commas, or line breaks"
+                )
+        return self
+
+    @model_validator(mode="after")
     def validate_alternate_nicks(self) -> "IRCProfile":
-        nick_pattern = re.compile(r"^[A-Za-z0-9\-\[\]\\`_^{|}~]+$")
         seen = {self.nick.casefold()}
         for nick in self.alternate_nicks:
-            if not nick_pattern.fullmatch(nick):
+            if not IRC_NICK_PATTERN.fullmatch(nick):
                 raise ValueError("alternate nicks must use valid IRC nickname characters")
             folded = nick.casefold()
             if folded in seen:

@@ -22,6 +22,10 @@ IRC_FORMATTING_RE = re.compile(
     r"\x03(?:\d{1,2}(?:,\d{1,2})?)?|\x04(?:[0-9A-Fa-f]{6}(?:,[0-9A-Fa-f]{6})?)?|"
     r"[\x00-\x02\x05-\x08\x0b\x0c\x0e-\x1f\x7f]"
 )
+# C0 controls except tab and LF: the LF is collapsed separately so a stray
+# line break can never split a PRIVMSG into a second protocol frame. This
+# also removes \x01, the CTCP delimiter, so a body cannot forge a CTCP query.
+IRC_OUTGOING_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
 class IRCAuthenticationError(RuntimeError):
@@ -193,6 +197,7 @@ class IRCClient:
         available = IRC_PAYLOAD_BYTES - len(prefix.encode("utf-8"))
         if available < 1:
             raise ValueError("IRC message target leaves no room for a body")
+        body = single_line_irc_text(IRC_OUTGOING_CONTROL_RE.sub("", body))
         await self.send_raw(f"{prefix}{truncate_utf8(body, available)}")
 
     async def send_action(self, target: str, body: str) -> None:
@@ -398,6 +403,14 @@ class IRCClient:
                         if self.kick_handler is not None:
                             await self.kick_handler(event)
                         raise IRCKickedError(event)
+                if command == "NICK" and params:
+                    # Services can force a nick change after registration (e.g.
+                    # a Guest12345 rename). Tracking it keeps attribution of the
+                    # bot's own lines, address detection, and sanitization honest.
+                    old_nick = line[1:].split("!", 1)[0] if line.startswith(":") else ""
+                    if irc_casefold(old_nick) == irc_casefold(self.current_nick):
+                        self.current_nick = params[0]
+                        logger.warning("IRC nick changed to %s", self.current_nick)
                 if command == "JOIN" and params:
                     joined_nick = line[1:].split("!", 1)[0] if line.startswith(":") else ""
                     if (

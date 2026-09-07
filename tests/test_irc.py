@@ -626,3 +626,111 @@ async def test_self_join_notifies_runtime(monkeypatch) -> None:
     with pytest.raises(ConnectionError):
         await client.run()
     assert events == [IRCJoinEvent("#test")]
+
+
+def _profile(**overrides) -> IRCProfile:
+    values = dict(
+        network="test", host="localhost", tls=False, nick="ghost",
+        username="ghost", realname="Ghost", channels=["#test"],
+    )
+    values.update(overrides)
+    return IRCProfile(**values)
+
+
+def test_nick_rejects_invalid_or_protocol_breaking_values() -> None:
+    with pytest.raises(ValidationError, match="nick"):
+        _profile(nick="1ghost")
+    with pytest.raises(ValidationError, match="nick"):
+        _profile(nick="gh ost")
+    with pytest.raises(ValidationError, match="nick"):
+        _profile(nick="ghost\r\nJOIN #other")
+
+
+def test_username_rejects_spaces_and_line_breaks() -> None:
+    with pytest.raises(ValidationError, match="username"):
+        _profile(username="ghost 0 * :x")
+    with pytest.raises(ValidationError, match="username"):
+        _profile(username="ghost\r\nPASS leaked")
+
+
+def test_server_password_rejects_line_breaks() -> None:
+    with pytest.raises(ValidationError, match="password"):
+        _profile(password="hunter2\r\nJOIN #other")
+
+
+def test_channels_reject_spaces_commas_and_line_breaks() -> None:
+    with pytest.raises(ValidationError, match="channels"):
+        _profile(channels=["#test,#other"])
+    with pytest.raises(ValidationError, match="channels"):
+        _profile(channels=["#test extra"])
+    with pytest.raises(ValidationError, match="channels"):
+        _profile(channels=["test"])
+
+
+@pytest.mark.asyncio
+async def test_send_message_strips_ctcp_and_control_bytes() -> None:
+    class Writer:
+        def __init__(self) -> None:
+            self.lines: list[str] = []
+
+        def write(self, data: bytes) -> None:
+            self.lines.append(data.decode())
+
+        async def drain(self) -> None:
+            return None
+
+    client = IRCClient(_profile(), lambda _message: None)
+    writer = Writer()
+    client.writer = writer
+    await client.send_message("#test", "hi \x01VERSION\x01 there")
+    await client.send_message("#test", "one\r\ntwo")
+    assert writer.lines == [
+        # The \x01 CTCP delimiters are gone, so this cannot read as a CTCP query.
+        "PRIVMSG #test :hi VERSION there\r\n",
+        "PRIVMSG #test :one two\r\n",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_forced_nick_change_after_registration_is_tracked(monkeypatch) -> None:
+    class Reader:
+        def __init__(self) -> None:
+            self.lines = iter([
+                b":server CAP ghost LS :\r\n",
+                b":server 001 ghost :Welcome to the network\r\n",
+                b":ghost!u@h NICK :ghost_\r\n",
+                b"",
+            ])
+
+        async def readline(self) -> bytes:
+            return next(self.lines)
+
+    class Writer:
+        def __init__(self) -> None:
+            self.lines: list[str] = []
+
+        def write(self, data: bytes) -> None:
+            self.lines.append(data.decode().rstrip("\r\n"))
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    writer = Writer()
+
+    async def open_connection(*_args, **_kwargs):
+        return Reader(), writer
+
+    async def handler(_message) -> None:
+        return None
+
+    monkeypatch.setattr("cellar.irc.asyncio.open_connection", open_connection)
+    client = IRCClient(_profile(), handler)
+    with pytest.raises(ConnectionError):
+        await client.run()
+    assert client.current_nick == "ghost_"

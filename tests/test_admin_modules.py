@@ -226,7 +226,25 @@ async def test_admin_api_matches_legacy_contract(tmp_path) -> None:
         await module.start(context)
         try:
             async with ClientSession() as session:
-                assert await (await session.get(f"http://127.0.0.1:{port}/health")).json() == {"ok": True}
+                health = await session.get(f"http://127.0.0.1:{port}/health")
+                assert health.status == 200
+                assert await health.json() == {
+                    "ok": True,
+                    "irc_connected": True,
+                    "failed_modules": {},
+                }
+                state.irc_connected = False
+                health = await session.get(f"http://127.0.0.1:{port}/health")
+                assert health.status == 503
+                assert not (await health.json())["ok"]
+                state.irc_connected = True
+                state.failed_modules["moods"] = "on_message"
+                health = await session.get(f"http://127.0.0.1:{port}/health")
+                assert health.status == 503
+                assert (await health.json())["failed_modules"] == {
+                    "moods": "on_message",
+                }
+                state.failed_modules.clear()
                 denied = await session.post(f"http://127.0.0.1:{port}/v1/command", json={"command": "status"})
                 assert denied.status == 401
                 headers = {"Authorization": "Bearer secret"}

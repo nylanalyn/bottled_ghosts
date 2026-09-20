@@ -72,7 +72,7 @@ class Module:
             return await handler(request)
 
         async def health(request: web.Request) -> web.Response:
-            return await self._health()
+            return await self._health(ctx)
 
         async def command(request: web.Request) -> web.Response:
             return await self._command(ctx, request)
@@ -100,8 +100,16 @@ class Module:
             await self._runner.cleanup()
             self._runner = None
 
-    async def _health(self) -> web.Response:
-        return web.json_response({"ok": True})
+    async def _health(self, ctx: RuntimeContext) -> web.Response:
+        ok = ctx.state.irc_connected and not ctx.state.failed_modules
+        return web.json_response(
+            {
+                "ok": ok,
+                "irc_connected": ctx.state.irc_connected,
+                "failed_modules": ctx.state.failed_modules,
+            },
+            status=200 if ok else 503,
+        )
 
     async def _command(self, ctx: RuntimeContext, request: web.Request) -> web.Response:
         try:

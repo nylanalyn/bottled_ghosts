@@ -146,6 +146,13 @@ shows IRC/model/response state, active modules, and mood when the moods module
 is active. `off` leaves IRC connected and persistently suppresses public model
 responses.
 
+The same loopback service exposes an unauthenticated `GET /health` for local
+monitoring. It returns HTTP 200 while the Bottle is connected to IRC with no
+failed modules, or HTTP 503 with JSON details otherwise. Configure one Uptime
+Kuma HTTP monitor per Bottle, using its unique admin API port. Kuma must run on
+the host network (or directly on the host), because the endpoint intentionally
+does not bind beyond loopback.
+
 Enable Rumi's addressed-message emergency monitoring separately:
 
 ```bash

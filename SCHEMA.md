@@ -114,7 +114,7 @@ Stores inspectable per-Bottle, per-channel fishing progress. Columns: `bot_id IN
 
 ## summaries
 
-Stores Bottle dream summaries with explicit coverage periods. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `period_start TEXT NOT NULL`, `period_end TEXT NOT NULL`, `summary TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `summaries_bot_period_idx(bot_id, period_end DESC, id DESC)`.
+Stores Bottle dream summaries with explicit coverage periods. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `period_start TEXT NOT NULL`, `period_end TEXT NOT NULL`, `summary TEXT NOT NULL`, `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `public_safe INTEGER NOT NULL DEFAULT 0` (CHECK 0 or 1). The flag is set only for dreams generated from public-channel messages after migration 036; historical dreams default to 0 and remain available for operator inspection but are excluded from prompts. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `summaries_bot_period_idx(bot_id, period_end DESC, id DESC)`.
 
 ## configuration_events
 
@@ -166,7 +166,7 @@ Stores runtime-enforced, temporary mood breaks per Bottle and IRC channel. Colum
 
 ## dream_followups
 
-Stores at most a few pending "unfinished threads" the optional followups module extracted from nightly dream summaries. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `summary_id INTEGER` (nullable link to the originating `summaries` row, set NULL if that summary is deleted), `followup_text TEXT NOT NULL` (CHECK length 1-300), `times_shown INTEGER NOT NULL DEFAULT 0` (CHECK nonnegative; counts prompt inclusions), `status TEXT NOT NULL DEFAULT 'pending'` (CHECK `pending` or `asked`), `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `expires_at TEXT NOT NULL`. Foreign keys: `bot_id` references `bots(id)` with cascading deletion; `summary_id` references `summaries(id)` with `ON DELETE SET NULL`. Index: `dream_followups_due_idx(bot_id, status, expires_at)`. The module's `nightly` hook stores one thread per dream (pruning the oldest pending rows beyond the configured cap); `before_prompt` offers the oldest unexpired pending thread to the model and increments `times_shown`, marking it `asked` once the configured prompt budget is spent.
+Stores at most a few pending "unfinished threads" the optional followups module extracted from nightly dream summaries. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `summary_id INTEGER` (nullable link to the originating `summaries` row, set NULL if that summary is deleted), `followup_text TEXT NOT NULL` (CHECK length 1-300), `times_shown INTEGER NOT NULL DEFAULT 0` (CHECK nonnegative; counts prompt inclusions), `status TEXT NOT NULL DEFAULT 'pending'` (CHECK `pending` or `asked`), `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `expires_at TEXT NOT NULL`. Foreign keys: `bot_id` references `bots(id)` with cascading deletion; `summary_id` references `summaries(id)` with `ON DELETE SET NULL`. Index: `dream_followups_due_idx(bot_id, status, expires_at)`. The module's `nightly` hook stores one thread per public-safe dream (pruning the oldest pending rows beyond the configured cap); `before_prompt` offers the oldest unexpired pending thread linked to a public-safe dream from the same Bottle and increments `times_shown`, marking it `asked` once the configured prompt budget is spent.
 
 ## user_affinity
 
@@ -209,3 +209,4 @@ Stores the optional affinity module's per-person warmth score. Columns: `bot_id 
 - 033: Add pending dream follow-up threads with prompt-inclusion budget and expiry for the optional followups module.
 - 034: Add per-user warmth scores for the optional affinity module.
 - 035: Add per-Bottle recollection mode and activation cursor, processed conversation chunks with source provenance, and FTS5 recollection search.
+- 036: Mark newly generated public-channel dreams safe for prompt use; keep historical summaries unmarked.

@@ -374,6 +374,48 @@ async def reject_memory_candidate(
         raise
 
 
+async def expire_stale_temporary_candidates(
+    db: aiosqlite.Connection, *, hours: int = TEMPORARY_MEMORY_HOURS,
+    apply: bool = False, actor: str = "operator",
+) -> list[int]:
+    """Preview or audit-reject temporary candidates that outlived their usefulness."""
+    if hours < 1:
+        raise ValueError("expiration age must be at least one hour")
+    actor = _actor(actor)
+    try:
+        if apply:
+            await db.execute("BEGIN IMMEDIATE")
+        rows = await (await db.execute(
+            """SELECT id FROM memory_candidates
+               WHERE status = 'pending' AND memory_type = 'temporary_state'
+                 AND created_at < datetime('now', ?)
+               ORDER BY id""",
+            (f"-{hours} hours",),
+        )).fetchall()
+        ids = [int(row["id"]) for row in rows]
+        if apply:
+            for candidate_id in ids:
+                await db.execute(
+                    """UPDATE memory_candidates
+                       SET status = 'rejected', reviewed_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""", (candidate_id,),
+                )
+                await db.execute(
+                    """INSERT INTO audit_events(
+                           action, entity_type, entity_id, actor,
+                           old_status, new_status
+                       ) VALUES ('reject', 'memory_candidate', ?, ?,
+                                 'pending', 'rejected')""",
+                    (candidate_id, f"{actor}:stale-temporary"),
+                )
+            await db.commit()
+        return ids
+    except Exception:
+        if apply:
+            await db.rollback()
+        raise
+
+
 async def list_user_memories(
     db: aiosqlite.Connection, *, bot_id: int, user_id: str,
     include_merged: bool = False,

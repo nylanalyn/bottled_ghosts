@@ -119,9 +119,12 @@ async def store_followup(
     try:
         await db.execute("BEGIN IMMEDIATE")
         summary_row = await (await db.execute(
-            "SELECT id FROM summaries WHERE bot_id = ? ORDER BY id DESC LIMIT 1",
+            """SELECT id FROM summaries WHERE bot_id = ? AND public_safe = 1
+               ORDER BY id DESC LIMIT 1""",
             (bot_id,),
         )).fetchone()
+        if summary_row is None:
+            raise ValueError("follow-up requires a public-safe dream summary")
         pending = list(await (await db.execute(
             """SELECT id FROM dream_followups
                WHERE bot_id = ? AND status = 'pending' ORDER BY id""",
@@ -133,9 +136,7 @@ async def store_followup(
         cursor = await db.execute(
             """INSERT INTO dream_followups(bot_id, summary_id, followup_text, expires_at)
                VALUES (?, ?, ?, datetime('now', ?))""",
-            (bot_id,
-             int(summary_row["id"]) if summary_row is not None else None,
-             text, f"+{valid_hours} hours"),
+            (bot_id, int(summary_row["id"]), text, f"+{valid_hours} hours"),
         )
         if cursor.lastrowid is None:
             raise RuntimeError("SQLite did not return a follow-up id")
@@ -162,10 +163,12 @@ class Module:
     async def before_prompt(self, ctx: ModuleContext) -> None:
         settings = _settings(ctx)
         row = await (await ctx.db.execute(
-            """SELECT id, followup_text, times_shown FROM dream_followups
-               WHERE bot_id = ? AND status = 'pending'
-                 AND expires_at > CURRENT_TIMESTAMP
-               ORDER BY id LIMIT 1""",
+            """SELECT f.id, f.followup_text, f.times_shown FROM dream_followups f
+               JOIN summaries s ON s.id = f.summary_id AND s.bot_id = f.bot_id
+                               AND s.public_safe = 1
+               WHERE f.bot_id = ? AND f.status = 'pending'
+                 AND f.expires_at > CURRENT_TIMESTAMP
+               ORDER BY f.id LIMIT 1""",
             (ctx.bottle.id,),
         )).fetchone()
         if row is None:

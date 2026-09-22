@@ -107,6 +107,8 @@ bottled-ghosts sediment-attach CANDIDATE_ID MEMORY_ID --actor aureate
 bottled-ghosts sediment-bulk-approve --min-confidence 0.9
 bottled-ghosts sediment-bulk-approve --min-confidence 0.9 --type preference --apply --actor aureate
 bottled-ghosts sediment-auto-approve-repeats
+bottled-ghosts sediment-expire-temporary
+bottled-ghosts sediment-expire-temporary --apply --actor aureate
 bottled-ghosts memories BOTTLE_ID USER_UUID
 bottled-ghosts memory-evidence MEMORY_ID
 bottled-ghosts memory-edit 1 --text "Prefers mature cheese" --actor aureate
@@ -125,6 +127,9 @@ when `--apply` is supplied. Model confidence alone is not proof of a good
 memory. Approval, rejection, evidence attachment, edits, and merges are
 transactional and append audit events. Merged memories remain as archived
 redirects, and every supporting candidate retains its source messages.
+The temporary-candidate cleanup previews pending `temporary_state` candidates
+older than 24 hours, then rejects them with an audit record only when `--apply`
+is supplied. Use `--hours` to change the cutoff.
 Sediment and approved memories belong to the Bottle that extracted them; the
 dashboard displays that owner. Only that Bottle's approved memories are
 retrieved into its prompts. Search raw logs with:
@@ -270,7 +275,11 @@ bottled-ghosts dreams 1
 ```
 
 Each summary records its exact period in SQLite, invokes enabled modules'
-`nightly` hooks, and becomes retrieval context for later replies. For automatic
+`nightly` hooks, and becomes retrieval context for later replies. Dream input
+includes public-channel messages only. Older summaries may contain private
+messages, so they remain inspectable with `dreams` but are excluded from reply
+prompts and follow-up prompts; newly generated dreams are marked public-safe.
+For automatic
 nightly operation, install the per-Bottle timers included in this repository:
 
 ```bash

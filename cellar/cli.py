@@ -22,6 +22,7 @@ from cellar.memory_store import (
     attach_memory_candidate,
     auto_approve_exact_repeats,
     edit_user_memory,
+    expire_stale_temporary_candidates,
     list_memory_evidence,
     list_memory_candidates,
     list_user_memories,
@@ -270,6 +271,12 @@ async def async_main(args: argparse.Namespace) -> None:
                 db, bot_id=args.bottle_id, user_id=args.user_id,
             )
             print(f"Automatically approved {count} exact repeat(s)")
+        elif args.command == "sediment-expire-temporary":
+            ids = await expire_stale_temporary_candidates(
+                db, hours=args.hours, apply=args.apply, actor=args.actor,
+            )
+            print(f"{'Rejected' if args.apply else 'Found'} {len(ids)} stale temporary "
+                  f"candidate(s): {', '.join(map(str, ids)) or '(none)'}")
         elif args.command == "sediment-reject":
             await reject_memory_candidate(
                 db, candidate_id=args.candidate_id, actor=args.actor
@@ -439,7 +446,8 @@ async def async_main(args: argparse.Namespace) -> None:
             for summary in await list_dreams(
                 db, bot_id=args.bottle_id, limit=args.limit,
             ):
-                print(f"{summary.id}\t{summary.period_start}\t{summary.period_end}\n"
+                print(f"{summary.id}\t{summary.period_start}\t{summary.period_end}"
+                      f"\t{'public-safe' if summary.public_safe else 'historical'}\n"
                       f"  {summary.summary}")
     finally:
         await db.close()
@@ -555,6 +563,13 @@ def main() -> None:
     )
     sediment_repeats.add_argument("--bottle-id", type=int)
     sediment_repeats.add_argument("--user-id")
+    sediment_expire = commands.add_parser(
+        "sediment-expire-temporary",
+        help="preview or reject pending temporary candidates older than 24 hours",
+    )
+    sediment_expire.add_argument("--hours", type=int, default=24)
+    sediment_expire.add_argument("--apply", action="store_true")
+    sediment_expire.add_argument("--actor", default="operator")
     sediment_reject = commands.add_parser("sediment-reject", help="reject a candidate")
     sediment_reject.add_argument("candidate_id", type=int)
     sediment_reject.add_argument("--actor", default="operator")

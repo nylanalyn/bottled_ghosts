@@ -26,6 +26,7 @@ async def messages_for_dream(
         """SELECT timestamp, channel, speaker, body FROM (
                SELECT id, timestamp, channel, speaker, body FROM messages
                WHERE bot_id = ? AND timestamp >= ? AND timestamp <= ?
+                 AND channel NOT LIKE '@%'
                ORDER BY id DESC LIMIT ?
            ) ORDER BY id""",
         (bot_id, period_start, period_end, limit),
@@ -45,8 +46,8 @@ async def store_dream(
     summary: str,
 ) -> DreamSummary:
     cursor = await db.execute(
-        """INSERT INTO summaries(bot_id, period_start, period_end, summary)
-           VALUES (?, ?, ?, ?)""", (bot_id, period_start, period_end, summary),
+        """INSERT INTO summaries(bot_id, period_start, period_end, summary, public_safe)
+           VALUES (?, ?, ?, ?, 1)""", (bot_id, period_start, period_end, summary),
     )
     await db.commit()
     if cursor.lastrowid is None:
@@ -64,7 +65,8 @@ async def recent_dream_texts(
 ) -> list[str]:
     cursor = await db.execute(
         """SELECT period_start, period_end, summary FROM summaries
-           WHERE bot_id = ? ORDER BY period_end DESC, id DESC LIMIT ?""", (bot_id, limit),
+           WHERE bot_id = ? AND public_safe = 1
+           ORDER BY period_end DESC, id DESC LIMIT ?""", (bot_id, limit),
     )
     return [
         f"{row['period_start']} through {row['period_end']}: {row['summary']}"

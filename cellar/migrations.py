@@ -1044,6 +1044,14 @@ async def migration_035(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_036(db: aiosqlite.Connection) -> None:
+    """Only newly generated public-channel dreams may enter prompts."""
+    await db.execute(
+        """ALTER TABLE summaries ADD COLUMN public_safe INTEGER NOT NULL DEFAULT 0
+           CHECK (public_safe IN (0, 1))"""
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -1068,6 +1076,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_033,
     migration_034,
     migration_035,
+    migration_036,
 )
 
 

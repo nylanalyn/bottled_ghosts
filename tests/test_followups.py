@@ -1,5 +1,6 @@
 import pytest
 
+from cellar.dream_store import store_dream
 from cellar.module_api import ModuleContext, NightlyContext
 from cellar.models import IncomingIRCMessage, IRCProfile, LLMProfile
 from cellar.storage import create_bottle, load_bottle, open_database
@@ -72,6 +73,8 @@ async def test_store_followup_caps_pending_rows(tmp_path) -> None:
     db = await open_database(tmp_path / "followups.db")
     try:
         bottle = await _bottle(db, tmp_path)
+        await store_dream(db, bot_id=bottle.id, period_start="p1", period_end="p2",
+                          summary="a public conversation")
         for text in ("first", "second", "third"):
             await store_followup(
                 db, bot_id=bottle.id, text=text, valid_hours=24, max_pending=2,
@@ -89,6 +92,8 @@ async def test_before_prompt_offers_thread_until_budget_spent(tmp_path) -> None:
     db = await open_database(tmp_path / "budget.db")
     try:
         bottle = await _bottle(db, tmp_path)
+        await store_dream(db, bot_id=bottle.id, period_start="p1", period_end="p2",
+                          summary="a public conversation")
         await store_followup(
             db, bot_id=bottle.id, text="did anyone ever fix the bot?",
             valid_hours=24, max_pending=2,
@@ -127,13 +132,37 @@ async def test_before_prompt_ignores_expired_threads(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_before_prompt_ignores_followup_from_historical_dream(tmp_path) -> None:
+    db = await open_database(tmp_path / "historical.db")
+    try:
+        bottle = await _bottle(db, tmp_path)
+        await db.execute(
+            """INSERT INTO summaries(bot_id, period_start, period_end, summary)
+               VALUES (?, 'p1', 'p2', 'old mixed-channel summary')""",
+            (bottle.id,),
+        )
+        await db.execute(
+            """INSERT INTO dream_followups(bot_id, summary_id, followup_text, expires_at)
+               VALUES (?, 1, 'private thread', datetime('now', '+1 hour'))""",
+            (bottle.id,),
+        )
+        await db.commit()
+        ctx = _context(bottle, db)
+        await Module().before_prompt(ctx)
+        assert ctx.prompt_sections == []
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
 async def test_nightly_stores_followup_from_summary(tmp_path, monkeypatch) -> None:
     db = await open_database(tmp_path / "nightly.db")
     try:
         bottle = await _bottle(db, tmp_path)
         await db.execute(
-            """INSERT INTO summaries(bot_id, period_start, period_end, summary)
-               VALUES (?, 'p1', 'p2', 'a day of fishing talk')""",
+            """INSERT INTO summaries(bot_id, period_start, period_end, summary,
+                                      public_safe)
+               VALUES (?, 'p1', 'p2', 'a day of fishing talk', 1)""",
             (bottle.id,),
         )
         await db.commit()

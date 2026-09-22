@@ -288,6 +288,7 @@ class DreamSummary(BaseModel):
     period_start: str
     period_end: str
     summary: str
+    public_safe: bool = False
     created_at: str
 
 

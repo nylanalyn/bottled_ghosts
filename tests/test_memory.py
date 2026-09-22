@@ -17,6 +17,7 @@ from cellar.memory_store import (
     approve_memory_candidates,
     approved_memory_texts,
     edit_user_memory,
+    expire_stale_temporary_candidates,
     list_all_user_memories,
     list_memory_candidates,
     list_user_memories,
@@ -49,6 +50,60 @@ def test_explicit_memory_request_requires_direct_instruction() -> None:
         assert explicit_memory_request(
             body, bot_names=names, direct_message=False,
         ) is None
+
+
+@pytest.mark.asyncio
+async def test_stale_temporary_candidates_preview_and_audited_cleanup(tmp_path) -> None:
+    db = await open_database(tmp_path / "stale.db")
+    try:
+        bottle_id = await create_bottle(
+            db, name="test", soul_prompt_path=tmp_path / "soul.md",
+            irc=IRCProfile(network="local", host="irc.example", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#test"]),
+            llm=LLMProfile(endpoint="http://localhost", model="test"),
+        )
+        user_id = await resolve_user(
+            db, network="local",
+            identity=IncomingIRCMessage(nick="alice", hostmask="u@h", account="alice",
+                                        target="#test", body="I'm busy"),
+        )
+        message_id = await log_message(
+            db, IRCMessage(network="local", channel="#test", speaker="alice",
+                           body="I'm busy", bot_id=bottle_id, user_id=user_id),
+        )
+        await store_memory_candidates(
+            db, bot_id=bottle_id, user_id=user_id, source_message_ids=[message_id],
+            candidates=[
+                ExtractedMemory(text="Busy today", type="temporary_state", confidence=0.8),
+                ExtractedMemory(text="Likes tea", type="preference", confidence=0.8),
+            ],
+        )
+        await db.execute(
+            "UPDATE memory_candidates SET created_at = datetime('now', '-2 days')"
+        )
+        await db.commit()
+        assert await expire_stale_temporary_candidates(db) == [1]
+        assert [row[0] for row in await (await db.execute(
+            "SELECT status FROM memory_candidates ORDER BY id"
+        )).fetchall()] == ["pending", "pending"]
+        assert await expire_stale_temporary_candidates(
+            db, apply=True, actor="tester",
+        ) == [1]
+        assert await expire_stale_temporary_candidates(db, apply=True) == []
+        rows = await (await db.execute(
+            "SELECT memory_type, status FROM memory_candidates ORDER BY id"
+        )).fetchall()
+        assert [tuple(row) for row in rows] == [
+            ("temporary_state", "rejected"), ("preference", "pending"),
+        ]
+        audit = await (await db.execute(
+            "SELECT action, actor, old_status, new_status FROM audit_events"
+        )).fetchone()
+        assert tuple(audit) == (
+            "reject", "tester:stale-temporary", "pending", "rejected",
+        )
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 import pytest
 
-from cellar.dream_store import list_dreams, recent_dream_texts
+from cellar.dream_store import list_dreams, messages_for_dream, recent_dream_texts
 from cellar.admin_store import is_quiet, response_enabled, set_quiet
 from cellar.dreams import run_dream, run_sleeping_dream
 from cellar.models import IRCMessage, IRCProfile, LLMProfile
@@ -27,6 +27,14 @@ async def test_dream_is_stored_without_private_reasoning(monkeypatch, tmp_path) 
             db, IRCMessage(network="local", channel="@private-user", speaker="alice",
                            body="A private secret", bot_id=bottle_id),
         )
+        await log_message(
+            db, IRCMessage(network="local", channel="#test", speaker="JeevesBot",
+                           body="[Fishing] alice caught a trout", bot_id=bottle_id),
+        )
+        await log_message(
+            db, IRCMessage(network="local", channel="#test", speaker="alice",
+                           body="!reel", bot_id=bottle_id),
+        )
         await db.execute(
             """INSERT INTO summaries(bot_id, period_start, period_end, summary)
                VALUES (?, '2020-01-01', '2020-01-02', 'historical mixed summary')""",
@@ -34,11 +42,19 @@ async def test_dream_is_stored_without_private_reasoning(monkeypatch, tmp_path) 
         )
         await db.commit()
         assert await recent_dream_texts(db, bot_id=bottle_id) == []
+        selected = await messages_for_dream(
+            db, bot_id=bottle_id, period_start="2020-01-01",
+            period_end="2100-01-01", limit=1,
+        )
+        assert len(selected) == 1
+        assert selected[0][3] == "The telescope is repaired"
 
         async def fake_complete(_profile, messages) -> str:
             assert "Be a quiet archivist." in messages[0]["content"]
             assert "telescope is repaired" in messages[1]["content"]
             assert "private secret" not in messages[1]["content"]
+            assert "[Fishing]" not in messages[1]["content"]
+            assert "!reel" not in messages[1]["content"]
             return "<think>private notes</think>\nThe telescope returned to service."
 
         monkeypatch.setattr("cellar.dreams.complete", fake_complete)
@@ -67,6 +83,10 @@ async def test_dream_skips_empty_period(tmp_path) -> None:
         await log_message(
             db, IRCMessage(network="local", channel="@private-user", speaker="alice",
                            body="Only a private conversation", bot_id=bottle_id),
+        )
+        await log_message(
+            db, IRCMessage(network="local", channel="#test", speaker="JeevesBot",
+                           body="[Fishing] alice caught a trout", bot_id=bottle_id),
         )
         assert await run_dream(db, bottle=await load_bottle(db, bottle_id)) is None
     finally:

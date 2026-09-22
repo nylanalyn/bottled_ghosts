@@ -1,14 +1,84 @@
 import pytest
 
 from cellar.models import IRCMessage, IRCProfile, LLMProfile
+from cellar.archive_filter import is_archive_noise
 from cellar.recollections import (
     archive_recollection, list_recollections, recollect, relevant_recollections,
     recollection_sources,
 )
 from cellar.storage import (
     create_bottle, load_bottle, log_message, open_database, prune_messages,
-    set_memory_extraction, set_recollections_enabled,
+    recent_messages, set_memory_extraction, set_recollections_enabled,
 )
+
+
+@pytest.mark.parametrize("body, expected", [
+    ("[Fishing] alice caught a trout", True),
+    ("  [Hunt] a duck appeared", True),
+    ("!reel", True),
+    ("!cast Red Void", True),
+    ("!hyg", True),
+    ("!local", True),
+    ("! a surprised sentence", False),
+    ("I want to !cast a line", False),
+    ("Let's hold a fishing tournament Friday", False),
+])
+def test_archive_noise_is_narrow(body: str, expected: bool) -> None:
+    assert is_archive_noise(body) is expected
+
+
+@pytest.mark.asyncio
+async def test_game_traffic_stays_in_logs_but_not_recollections(tmp_path, monkeypatch) -> None:
+    db = await open_database(tmp_path / "game.db")
+    try:
+        bottle_id = await create_bottle(
+            db, name="ghost", soul_prompt_path=tmp_path / "soul.md",
+            irc=IRCProfile(network="local", host="irc.example", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#one"]),
+            llm=LLMProfile(endpoint="http://localhost", model="test"),
+        )
+        await set_recollections_enabled(db, bottle_id=bottle_id, enabled=True)
+        await db.execute("INSERT INTO users(id, canonical_name) VALUES ('alice', 'alice')")
+        messages = [
+            ("JeevesBot", "[Fishing] alice caught a trout", None, "00:00:00"),
+            ("alice", "!reel", "alice", "00:00:01"),
+            ("alice", "Let's hold a fishing tournament Friday", "alice", "00:00:02"),
+            ("JeevesBot", "[Hunt] a duck appeared", None, "00:20:00"),
+            ("alice", "!hyg", "alice", "00:20:01"),
+        ]
+        for speaker, body, user_id, time in messages:
+            message_id = await log_message(
+                db, IRCMessage(network="local", channel="#one", speaker=speaker,
+                               body=body, bot_id=bottle_id, user_id=user_id),
+            )
+            await db.execute(
+                "UPDATE messages SET timestamp = ? WHERE id = ?",
+                (f"2020-01-01 {time}", message_id),
+            )
+        await db.commit()
+
+        calls = 0
+
+        async def fake_complete(_profile, prompt) -> str:
+            nonlocal calls
+            calls += 1
+            assert "tournament Friday" in prompt[1]["content"]
+            assert "[Fishing]" not in prompt[1]["content"]
+            assert "!reel" not in prompt[1]["content"]
+            return '{"summary":"Alice proposed a fishing tournament for Friday."}'
+
+        monkeypatch.setattr("cellar.recollections.complete", fake_complete)
+        assert await recollect(db, bottle=await load_bottle(db, bottle_id)) == 2
+        assert calls == 1
+        assert len(await list_recollections(db, bot_id=bottle_id)) == 1
+        assert len(await recollection_sources(db, recollection_id=1)) == 3
+        assert (await (await db.execute("SELECT count(*) FROM messages")).fetchone())[0] == 5
+        assert ("JeevesBot", "[Fishing] alice caught a trout") in await recent_messages(
+            db, bot_id=bottle_id, network="local", channel="#one",
+        )
+        assert await recollect(db, bottle=await load_bottle(db, bottle_id)) == 0
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio

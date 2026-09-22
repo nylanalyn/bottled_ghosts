@@ -1,5 +1,6 @@
 import aiosqlite
 
+from cellar.archive_filter import is_archive_noise
 from cellar.models import DreamSummary
 
 
@@ -22,11 +23,13 @@ async def messages_for_dream(
     period_end: str,
     limit: int = 200,
 ) -> list[tuple[str, str, str, str]]:
+    await db.create_function("is_archive_noise", 1, is_archive_noise, deterministic=True)
     cursor = await db.execute(
         """SELECT timestamp, channel, speaker, body FROM (
                SELECT id, timestamp, channel, speaker, body FROM messages
                WHERE bot_id = ? AND timestamp >= ? AND timestamp <= ?
                  AND channel NOT LIKE '@%'
+                 AND NOT is_archive_noise(body)
                ORDER BY id DESC LIMIT ?
            ) ORDER BY id""",
         (bot_id, period_start, period_end, limit),

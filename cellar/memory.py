@@ -13,6 +13,28 @@ BOT_ADDRESS_MARKER = "[direct address to the bot]"
 logger = logging.getLogger(__name__)
 
 
+def explicit_memory_request(
+    body: str, *, bot_names: tuple[str, ...], direct_message: bool,
+) -> str | None:
+    """Return a direct request's claim, excluding casual mentions of remembering."""
+    text = body.strip()
+    if not direct_message:
+        for name in sorted(bot_names, key=len, reverse=True):
+            if irc_casefold(text[:len(name)]) != irc_casefold(name):
+                continue
+            tail = text[len(name):]
+            if tail and tail[0] in ":, ":
+                text = tail.lstrip(" :,\t")
+                break
+        else:
+            return None
+    match = re.fullmatch(
+        r"(?:please\s+)?remember\s+(?:that\s+|this\s*:\s*)(.+)",
+        text, flags=re.IGNORECASE | re.DOTALL,
+    )
+    return match.group(1).strip() if match and match.group(1).strip() else None
+
+
 async def extract_candidates(
     profile: LLMProfile, *, speaker: str, body: str,
     bot_names: tuple[str, ...] = (),

@@ -21,7 +21,7 @@ from cellar.identity import resolve_user_identity
 from cellar.ignore_store import matching_ignore_action
 from cellar.listening import ListeningWindowManager
 from cellar.llm import complete
-from cellar.memory import extract_candidates
+from cellar.memory import explicit_memory_request, extract_candidates
 from cellar.memory_store import approved_memory_texts, store_memory_candidates
 from cellar.recollections import relevant_recollections
 from cellar.dream_store import recent_dream_texts
@@ -332,7 +332,7 @@ async def run_bottle_once(
                                    speaker=active_nick(), body=line, bot_id=bottle.id),
                 )
         logger.info("sent %d reply line(s) to %s", len(lines), reply_target)
-        if bottle.extract_memories and not bottle.recollections_enabled and replies_enabled:
+        if (bottle.extract_memories or bottle.recollections_enabled) and replies_enabled:
             try:
                 # A grouped window carries lines from several people; extract
                 # per person so facts are attributed to the right identity.
@@ -340,23 +340,45 @@ async def run_bottle_once(
                 for item in items:
                     by_user.setdefault(item.user_id, []).append(item)
                 for group_user_id, group_items in by_user.items():
+                    if bottle.recollections_enabled:
+                        requests: list[tuple[WindowMessage, str]] = []
+                        for item in group_items:
+                            claim = explicit_memory_request(
+                                item.message.body,
+                                bot_names=(active_nick(), *bottle.address_names),
+                                direct_message=irc_casefold(item.message.target)
+                                == irc_casefold(active_nick()),
+                            )
+                            if claim:
+                                requests.append((item, claim))
+                        if not requests:
+                            continue
+                        # One explicit request yields at most one pending claim.
+                        source_items = [item for item, _ in requests]
+                        extraction_body = "\n".join(claim for _, claim in requests)
+                    else:
+                        source_items = group_items
+                        extraction_body = "\n".join(
+                            item.message.body for item in group_items
+                        )
                     candidates = await extract_candidates(
-                        bottle.llm,
-                        speaker=group_items[-1].message.nick,
-                        body="\n".join(item.message.body for item in group_items),
+                        bottle.llm, speaker=source_items[-1].message.nick,
+                        body=extraction_body,
                         bot_names=(active_nick(), *bottle.address_names),
                     )
+                    if bottle.recollections_enabled:
+                        candidates = candidates[:1]
                     async with database_lock:
                         inserted = await store_memory_candidates(
                             db, bot_id=bottle.id, user_id=group_user_id,
                             source_message_ids=[
-                                item.message_id for item in group_items
+                                item.message_id for item in source_items
                             ],
                             candidates=candidates,
                         )
                     logger.info(
                         "stored %d pending memory candidate(s) for %s",
-                        inserted, group_items[-1].message.nick,
+                        inserted, source_items[-1].message.nick,
                     )
             except Exception:
                 logger.exception("memory extraction failed for message %d", latest.message_id)

@@ -3,7 +3,7 @@ import pytest
 from pydantic import ValidationError
 
 from cellar.identity import resolve_user
-from cellar.memory import extract_candidates
+from cellar.memory import explicit_memory_request, extract_candidates
 from cellar.migrations import MIGRATIONS
 from cellar.models import (
     ExtractedMemory,
@@ -24,6 +24,31 @@ from cellar.memory_store import (
     store_memory_candidates,
 )
 from cellar.storage import create_bottle, log_message, open_database, set_memory_extraction
+
+
+def test_explicit_memory_request_requires_direct_instruction() -> None:
+    names = ("ghost",)
+    assert explicit_memory_request(
+        "ghost: please remember that I dislike pepper",
+        bot_names=names, direct_message=False,
+    ) == "I dislike pepper"
+    assert explicit_memory_request(
+        "remember this: my telescope is repaired",
+        bot_names=names, direct_message=True,
+    ) == "my telescope is repaired"
+    assert explicit_memory_request(
+        "Do you remember that I dislike pepper?",
+        bot_names=names, direct_message=True,
+    ) is None
+    for body in (
+        "Do you remember that I dislike pepper?",
+        "ghost: do you remember that I dislike pepper?",
+        "alice, remember that I dislike pepper",
+        "ghost: I said remember that I dislike pepper",
+    ):
+        assert explicit_memory_request(
+            body, bot_names=names, direct_message=False,
+        ) is None
 
 
 @pytest.mark.asyncio

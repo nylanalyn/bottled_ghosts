@@ -9,7 +9,10 @@ are stored so reruns do not call the model again. FTS5 retrieval is limited to
 the same Bottle, network, and conversation; private conversations stay private.
 
 Enabling recollection mode turns off per-reply semantic candidate extraction for
-that Bottle. Existing approved memories and their evidence remain in use.
+that Bottle. A direct `remember that ...` or `remember this: ...` request can
+still create one pending semantic candidate from the requesting speaker's own
+message. It follows the existing review and evidence path. Existing approved
+memories and their evidence remain in use.
 Operators can inspect and archive recollections. Archives remain inspectable.
 
 ## Alternatives considered

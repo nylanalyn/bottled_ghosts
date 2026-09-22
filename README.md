@@ -68,6 +68,10 @@ use `--limit-chunks` to catch up. Recollection mode disables per-reply sediment
 extraction for that Bottle and starts with new messages. Restart the Bottle after changing modes. Recollections
 are fallible summaries, retrieved only within the same Bottle and conversation;
 private messages are not recalled into public rooms.
+An addressed `remember that ...` or `remember this: ...` request still creates
+one pending semantic candidate for operator review. Ordinary conversation does
+not create semantic candidates in recollection mode. A request never becomes a
+trusted memory merely because someone phrased it as a command.
 
 For this checkout, a user systemd timer is included:
 

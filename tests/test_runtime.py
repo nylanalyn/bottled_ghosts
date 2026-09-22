@@ -17,7 +17,71 @@ from cellar.module_store import set_module_enabled, set_module_settings
 from cellar.module_api import ModuleRunner
 from cellar.runtime import run_bottle, run_bottle_once, run_bottles
 from cellar.irc import IRCAuthenticationError, IRCKickEvent, IRCKickedError
-from cellar.storage import create_bottle, load_bottle, log_message, open_database
+from cellar.storage import (
+    create_bottle, load_bottle, log_message, open_database, set_recollections_enabled,
+)
+
+
+@pytest.mark.asyncio
+async def test_recollection_mode_extracts_only_explicit_memory_requests(
+    monkeypatch, tmp_path,
+) -> None:
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(tmp_path / "requests.db")
+    try:
+        bottle_id = await create_bottle(
+            db, name="test", soul_prompt_path=soul,
+            irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#test"]),
+            llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+            cooldown_seconds=0, listen_window_seconds=0.01,
+        )
+        await set_recollections_enabled(db, bottle_id=bottle_id, enabled=True)
+        extracted: list[str] = []
+
+        class FakeIRCClient:
+            def __init__(self, _profile, handler) -> None:
+                self.handler = handler
+
+            async def run(self) -> None:
+                for body in (
+                    "ghost: I like tea",
+                    "ghost: remember that I like tea",
+                ):
+                    await self.handler(IncomingIRCMessage(
+                        nick="alice", hostmask="a@host", account="alice",
+                        target="#test", body=body,
+                    ))
+                    await asyncio.sleep(0.03)
+
+            async def send_message(self, _target: str, _body: str) -> None:
+                return None
+
+            async def send_action(self, _target: str, _body: str) -> None:
+                return None
+
+        async def fake_complete(_profile, _prompt) -> str:
+            return "okay"
+
+        async def fake_extract(_profile, *, speaker, body, bot_names):
+            assert speaker == "alice"
+            extracted.append(body)
+            return [ExtractedMemory(text="Alice likes tea", type="preference",
+                                    confidence=0.9)]
+
+        monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+        monkeypatch.setattr("cellar.runtime.complete", fake_complete)
+        monkeypatch.setattr("cellar.runtime.extract_candidates", fake_extract)
+        await run_bottle_once(db, await load_bottle(db, bottle_id), ModuleRunner([]))
+        assert extracted == ["I like tea"]
+        sources = await (await db.execute(
+            """SELECT m.body FROM memory_candidate_sources s
+               JOIN messages m ON m.id = s.message_id"""
+        )).fetchall()
+        assert [row[0] for row in sources] == ["ghost: remember that I like tea"]
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio

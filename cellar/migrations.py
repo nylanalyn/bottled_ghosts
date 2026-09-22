@@ -969,6 +969,81 @@ async def migration_034(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_035(db: aiosqlite.Connection) -> None:
+    """Store processed conversation chunks and searchable recollections."""
+    await db.executescript(
+        """
+        ALTER TABLE bots ADD COLUMN recollections_enabled INTEGER NOT NULL DEFAULT 0
+            CHECK (recollections_enabled IN (0, 1));
+        ALTER TABLE bots ADD COLUMN recollection_start_id INTEGER NOT NULL DEFAULT 0
+            CHECK (recollection_start_id >= 0);
+        CREATE TABLE recollections (
+            id INTEGER PRIMARY KEY,
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            first_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+            last_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+            period_start TEXT NOT NULL,
+            period_end TEXT NOT NULL,
+            summary TEXT CHECK (summary IS NULL OR length(summary) BETWEEN 1 AND 500),
+            state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'archived')),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            archived_at TEXT,
+            UNIQUE(bot_id, network, channel, first_message_id)
+        );
+        CREATE INDEX recollections_scope_idx
+            ON recollections(bot_id, network, channel, last_message_id DESC);
+        CREATE TRIGGER recollections_scope_insert
+        BEFORE INSERT ON recollections BEGIN
+            SELECT CASE WHEN NOT EXISTS (
+                SELECT 1 FROM messages first JOIN messages last
+                  ON last.id = NEW.last_message_id
+                WHERE first.id = NEW.first_message_id
+                  AND first.bot_id = NEW.bot_id AND last.bot_id = NEW.bot_id
+                  AND first.network = NEW.network AND last.network = NEW.network
+                  AND first.channel = NEW.channel AND last.channel = NEW.channel
+                  AND first.id <= last.id
+            ) THEN RAISE(ABORT, 'recollection span scope mismatch') END;
+        END;
+        CREATE TABLE recollection_sources (
+            recollection_id INTEGER NOT NULL REFERENCES recollections(id) ON DELETE CASCADE,
+            message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+            ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+            PRIMARY KEY (recollection_id, message_id),
+            UNIQUE(recollection_id, ordinal)
+        );
+        CREATE INDEX recollection_sources_message_idx
+            ON recollection_sources(message_id);
+        CREATE TRIGGER recollection_sources_scope_insert
+        BEFORE INSERT ON recollection_sources BEGIN
+            SELECT CASE WHEN NOT EXISTS (
+                SELECT 1 FROM recollections r JOIN messages m
+                  ON m.bot_id = r.bot_id AND m.network = r.network
+                 AND m.channel = r.channel
+                WHERE r.id = NEW.recollection_id AND m.id = NEW.message_id
+                  AND m.id BETWEEN r.first_message_id AND r.last_message_id
+            ) THEN RAISE(ABORT, 'recollection source scope mismatch') END;
+        END;
+        CREATE VIRTUAL TABLE recollections_fts USING fts5(
+            summary, content='recollections', content_rowid='id'
+        );
+        CREATE TRIGGER recollections_fts_insert AFTER INSERT ON recollections BEGIN
+            INSERT INTO recollections_fts(rowid, summary) VALUES (new.id, new.summary);
+        END;
+        CREATE TRIGGER recollections_fts_delete AFTER DELETE ON recollections BEGIN
+            INSERT INTO recollections_fts(recollections_fts, rowid, summary)
+            VALUES ('delete', old.id, old.summary);
+        END;
+        CREATE TRIGGER recollections_fts_update AFTER UPDATE OF summary ON recollections BEGIN
+            INSERT INTO recollections_fts(recollections_fts, rowid, summary)
+            VALUES ('delete', old.id, old.summary);
+            INSERT INTO recollections_fts(rowid, summary) VALUES (new.id, new.summary);
+        END;
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -992,6 +1067,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_032,
     migration_033,
     migration_034,
+    migration_035,
 )
 
 

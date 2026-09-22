@@ -52,6 +52,7 @@ def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
         cooldown_seconds=row["cooldown_seconds"],
         listen_window_seconds=row["listen_window_seconds"],
         extract_memories=bool(row["extract_memories"]),
+        recollections_enabled=bool(row["recollections_enabled"]),
         timezone=row["timezone"],
         aliases=json.loads(row["aliases"]),
         irc=IRCProfile(network=row["network"], host=row["host"], port=row["port"],
@@ -70,7 +71,8 @@ def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
 
 async def list_bottles(db: aiosqlite.Connection) -> list[BottleSummary]:
     cursor = await db.execute(
-        """SELECT b.id, b.name, b.enabled, b.extract_memories, i.network, i.nick, i.channels
+        """SELECT b.id, b.name, b.enabled, b.extract_memories,
+                  b.recollections_enabled, i.network, i.nick, i.channels
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
            ORDER BY b.id"""
     )
@@ -79,7 +81,8 @@ async def list_bottles(db: aiosqlite.Connection) -> list[BottleSummary]:
         BottleSummary(id=row["id"], name=row["name"], enabled=bool(row["enabled"]),
                       network=row["network"], nick=row["nick"],
                       channels=json.loads(row["channels"]),
-                      extract_memories=bool(row["extract_memories"]))
+                      extract_memories=bool(row["extract_memories"]),
+                      recollections_enabled=bool(row["recollections_enabled"]))
         for row in rows
     ]
 
@@ -297,6 +300,54 @@ async def set_memory_extraction(
     )
 
 
+async def set_recollections_enabled(
+    db: aiosqlite.Connection, *, bottle_id: int, enabled: bool, actor: str = "operator"
+) -> bool:
+    """Enabling recollections retires per-reply candidate extraction for this Bottle."""
+    actor = actor.strip()
+    if not actor:
+        raise ValueError("configuration actor cannot be empty")
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        row = await (await db.execute(
+            """SELECT recollections_enabled, extract_memories, recollection_start_id
+               FROM bots WHERE id = ?""",
+            (bottle_id,),
+        )).fetchone()
+        if row is None:
+            raise LookupError(f"Bottle {bottle_id} does not exist")
+        changed = bool(row["recollections_enabled"]) != enabled or (
+            enabled and bool(row["extract_memories"])
+        )
+        if changed:
+            await db.execute(
+                """UPDATE bots SET recollections_enabled = ?,
+                      extract_memories = CASE WHEN ? THEN 0 ELSE extract_memories END,
+                      recollection_start_id = CASE WHEN ? THEN
+                          (SELECT COALESCE(MAX(id), 0) FROM messages WHERE bot_id = ?)
+                          ELSE recollection_start_id END
+                   WHERE id = ?""", (enabled, enabled, enabled, bottle_id, bottle_id),
+            )
+            updated = await (await db.execute(
+                """SELECT recollections_enabled, extract_memories, recollection_start_id
+                   FROM bots WHERE id = ?""", (bottle_id,),
+            )).fetchone()
+            if updated is None:
+                raise RuntimeError("updated Bottle could not be reloaded")
+            await db.execute(
+                """INSERT INTO configuration_events(
+                       bot_id, actor, changed_fields, old_value, new_value
+                   ) VALUES (?, ?, 'recollections_enabled,extract_memories,recollection_start_id',
+                             ?, ?)""",
+                (bottle_id, actor, json.dumps(dict(row)), json.dumps(dict(updated))),
+            )
+        await db.commit()
+        return changed
+    except Exception:
+        await db.rollback()
+        raise
+
+
 async def set_bottle_enabled(
     db: aiosqlite.Connection, *, bottle_id: int, enabled: bool, actor: str = "operator"
 ) -> bool:
@@ -320,6 +371,12 @@ async def _set_bot_flag(
         )).fetchone()
         if row is None:
             raise LookupError(f"Bottle {bottle_id} does not exist")
+        if column == "extract_memories" and enabled:
+            mode = await (await db.execute(
+                "SELECT recollections_enabled FROM bots WHERE id = ?", (bottle_id,),
+            )).fetchone()
+            if mode is not None and mode[0]:
+                raise ValueError("disable recollections before enabling per-reply sediment")
         old_value = bool(row[column])
         if old_value == enabled:
             await db.commit()
@@ -465,6 +522,10 @@ async def prune_messages(
                WHERE timestamp < datetime('now', ?)
                  AND NOT EXISTS (
                      SELECT 1 FROM memory_candidate_sources sources
+                     WHERE sources.message_id = messages.id
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM recollection_sources sources
                      WHERE sources.message_id = messages.id
                  )""",
             (f"-{older_than_days} days",),

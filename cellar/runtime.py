@@ -23,6 +23,7 @@ from cellar.listening import ListeningWindowManager
 from cellar.llm import complete
 from cellar.memory import extract_candidates
 from cellar.memory_store import approved_memory_texts, store_memory_candidates
+from cellar.recollections import relevant_recollections
 from cellar.dream_store import recent_dream_texts
 from cellar.models import Bottle, IRCMessage, IncomingIRCMessage
 from cellar.module_api import (
@@ -258,6 +259,12 @@ async def run_bottle_once(
                 else:
                     memories.extend(texts)
             dreams = await recent_dream_texts(db, bot_id=bottle.id)
+            recollections = (
+                await relevant_recollections(
+                    db, bot_id=bottle.id, network=bottle.irc.network,
+                    channel=channel, query_text=body,
+                ) if bottle.recollections_enabled else []
+            )
             availability = await away_status(db, bottle_id=bottle.id)
             if availability is not None:
                 module_context.prompt_sections.append(
@@ -276,6 +283,7 @@ async def run_bottle_once(
         prompt = build_prompt(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,
             dreams=dreams, relevant=relevant, history=history, speaker=speaker, body=body,
+            recollections=recollections,
             bot_nicks=(active_nick(),),
             addressed=any(item.addressed for item in items),
             local_time=local_datetime_context(bottle.timezone),
@@ -324,7 +332,7 @@ async def run_bottle_once(
                                    speaker=active_nick(), body=line, bot_id=bottle.id),
                 )
         logger.info("sent %d reply line(s) to %s", len(lines), reply_target)
-        if bottle.extract_memories and replies_enabled:
+        if bottle.extract_memories and not bottle.recollections_enabled and replies_enabled:
             try:
                 # A grouped window carries lines from several people; extract
                 # per person so facts are attributed to the right identity.

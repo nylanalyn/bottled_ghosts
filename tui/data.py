@@ -9,6 +9,7 @@ class DashboardBottle(BaseModel):
     name: str
     enabled: bool
     extract_memories: bool
+    recollections_enabled: bool
     network: str
     nick: str
     channels: list[str]
@@ -37,6 +38,7 @@ class DashboardAuditEvent(BaseModel):
 async def dashboard_bottles(db: aiosqlite.Connection) -> list[DashboardBottle]:
     cursor = await db.execute(
         """SELECT b.id, b.name, b.enabled, b.extract_memories,
+                  b.recollections_enabled,
                   i.network, i.nick, i.channels,
                   (SELECT COUNT(*) FROM memory_candidates c
                    JOIN messages cm ON cm.id = c.source_message_id
@@ -51,6 +53,7 @@ async def dashboard_bottles(db: aiosqlite.Connection) -> list[DashboardBottle]:
         DashboardBottle(
             id=row["id"], name=row["name"], enabled=bool(row["enabled"]),
             extract_memories=bool(row["extract_memories"]), network=row["network"],
+            recollections_enabled=bool(row["recollections_enabled"]),
             nick=row["nick"], channels=json.loads(row["channels"]),
             pending_candidates=row["pending_candidates"], last_activity=row["last_activity"],
             enabled_modules=row["enabled_modules"],

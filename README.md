@@ -50,6 +50,37 @@ LLM call, exact matches from the current network and channel are retrieved and
 added to the prompt ahead of recent conversation context. No embedding service
 is required.
 
+For automatic conversational continuity, enable recollections for a Bottle:
+
+```bash
+bottled-ghosts recollections-mode 1 on
+bottled-ghosts recollect 1
+bottled-ghosts recollections 1
+bottled-ghosts recollection-sources RECOLLECTION_ID
+bottled-ghosts recollection-archive RECOLLECTION_ID --actor aureate
+```
+
+Schedule `recollect 1` about every ten minutes with your preferred timer or
+cron service, using the same `--database` path as the runtime. The job processes
+only closed conversation chunks, records empty results, and can be run again
+without duplicate recollections. A run handles at most ten chunks by default;
+use `--limit-chunks` to catch up. Recollection mode disables per-reply sediment
+extraction for that Bottle and starts with new messages. Restart the Bottle after changing modes. Recollections
+are fallible summaries, retrieved only within the same Bottle and conversation;
+private messages are not recalled into public rooms.
+
+For this checkout, a user systemd timer is included:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp bottled-ghosts-recollect.service bottled-ghosts-recollect.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now bottled-ghosts-recollect.timer
+```
+
+The timer calls `recollect-all` every ten minutes for enabled Bottles in
+recollection mode. Adjust the service paths if the checkout or database moves.
+
 Sediment extraction is disabled by default because it adds a second LLM call
 after each handled message. Enable it explicitly for a Bottle:
 
@@ -253,7 +284,7 @@ responses and module-generated IRC commands are disabled during the dream, and
 the previous response state is restored afterward, including when the LLM call
 fails. Rumi-as, Bork, and disabled Bottles are not included in these timers.
 
-Open the read-only operational dashboard with:
+Open the operational dashboard with:
 
 ```bash
 bottled-ghosts tui --actor aureate
@@ -267,7 +298,9 @@ The Sediment tab shows candidate provenance and likely existing memories from
 the same Bottle/user scope. Press `a` to approve the selected candidate, `x` to
 reject it, or enter a memory ID to attach it as further evidence; all actions
 use the supplied audit identity.
-The Memories tab lists trusted memories and every supporting candidate/source.
+The Recollections tab shows fallible conversation summaries and their source
+messages, and lets an operator archive a mistaken summary. The Memories tab
+lists trusted memories and every supporting candidate/source.
 Edit the selected
 memory's text, type, or confidence and press the save button or `Ctrl+S`; the
 change is written transactionally with the same audit identity.

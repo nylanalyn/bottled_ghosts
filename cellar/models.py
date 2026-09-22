@@ -122,6 +122,7 @@ class Bottle(BaseModel):
     cooldown_seconds: float = Field(default=1.0, ge=0)
     listen_window_seconds: float = Field(default=8.0, gt=0)
     extract_memories: bool = False
+    recollections_enabled: bool = False
     timezone: str = "UTC"
     aliases: list[str] = Field(default_factory=list)
 
@@ -166,6 +167,7 @@ class BottleSummary(BaseModel):
     nick: str
     channels: list[str]
     extract_memories: bool
+    recollections_enabled: bool = False
 
 
 class ExtractedMemory(BaseModel):

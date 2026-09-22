@@ -18,7 +18,7 @@ Stores OpenAI-compatible HTTP configuration. Columns: `id INTEGER PRIMARY KEY`, 
 
 ## bots
 
-Stores bottle definitions and enforced output limits. Columns: `id INTEGER PRIMARY KEY`, `name TEXT NOT NULL UNIQUE`, `enabled INTEGER NOT NULL`, `soul_prompt_path TEXT NOT NULL`, `llm_profile_id INTEGER NOT NULL`, `irc_profile_id INTEGER NOT NULL`, `max_lines INTEGER NOT NULL`, `max_chars INTEGER NOT NULL`, `cooldown_seconds REAL NOT NULL`, `listen_window_seconds REAL NOT NULL DEFAULT 8.0`, `extract_memories INTEGER NOT NULL DEFAULT 0`, `timezone TEXT NOT NULL DEFAULT 'UTC'`.
+Stores bottle definitions and enforced output limits. Columns: `id INTEGER PRIMARY KEY`, `name TEXT NOT NULL UNIQUE`, `enabled INTEGER NOT NULL`, `soul_prompt_path TEXT NOT NULL`, `llm_profile_id INTEGER NOT NULL`, `irc_profile_id INTEGER NOT NULL`, `max_lines INTEGER NOT NULL`, `max_chars INTEGER NOT NULL`, `cooldown_seconds REAL NOT NULL`, `listen_window_seconds REAL NOT NULL DEFAULT 8.0`, `extract_memories INTEGER NOT NULL DEFAULT 0`, `recollections_enabled INTEGER NOT NULL DEFAULT 0` (CHECK 0 or 1), `recollection_start_id INTEGER NOT NULL DEFAULT 0` (CHECK nonnegative; the highest message ID when recollections were last enabled), `timezone TEXT NOT NULL DEFAULT 'UTC'`.
 
 `timezone` is a validated IANA time-zone identifier used to calculate fresh local date/time prompt context.
 
@@ -73,6 +73,18 @@ Links one canonical memory to every approved sediment candidate supporting it. C
 ## user_memories_fts
 
 External-content FTS5 virtual table indexing `user_memories.memory_text` with the memory ID as its row ID. The `user_memories_fts_insert`, `user_memories_fts_update`, and `user_memories_fts_delete` triggers keep the index synchronized. Prompt retrieval scopes FTS matches to an active, unexpired memory's Bottle and user before adding relationship/identity baseline memories and recent fallback memories.
+
+## recollections
+
+Stores one processed conversation chunk per row, including chunks for which the extractor returned no useful memory (`summary IS NULL`). Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `first_message_id INTEGER NOT NULL`, `last_message_id INTEGER NOT NULL`, `period_start TEXT NOT NULL`, `period_end TEXT NOT NULL`, `summary TEXT` (NULL or 1–500 characters), `state TEXT NOT NULL DEFAULT 'active'` (`active` or `archived`), `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `archived_at TEXT`. Foreign keys: `bot_id` references `bots(id)` with cascading deletion; first and last message IDs reference `messages(id)` with deletion restricted. Unique `(bot_id, network, channel, first_message_id)` prevents duplicate processing. Index: `recollections_scope_idx(bot_id, network, channel, last_message_id DESC)`. The `recollections_scope_insert` trigger enforces matching Bottle, network, and channel on span endpoints. Archived rows and empty summaries are excluded from prompt retrieval.
+
+## recollection_sources
+
+Links every source message in a processed chunk to its recollection. Columns: `recollection_id INTEGER NOT NULL`, `message_id INTEGER NOT NULL`, `ordinal INTEGER NOT NULL` (nonnegative). Primary key `(recollection_id, message_id)`; unique `(recollection_id, ordinal)`. Foreign keys: `recollection_id` references `recollections(id)` with cascading deletion and `message_id` references `messages(id)` with deletion restricted. Index: `recollection_sources_message_idx(message_id)`. The `recollection_sources_scope_insert` trigger requires the message to belong to the same Bottle, network, channel, and ID span. Message pruning retains linked sources.
+
+## recollections_fts
+
+FTS5 external-content virtual table indexing `recollections.summary` by recollection ID. The `recollections_fts_insert`, `recollections_fts_delete`, and `recollections_fts_update` triggers keep it synchronized. Runtime retrieval limits matches to the current Bottle, network, and conversation.
 
 ## memory_consolidation_proposals
 
@@ -196,3 +208,4 @@ Stores the optional affinity module's per-person warmth score. Columns: `bot_id 
 - 032: Add per-Bottle quiet mode column; stay online and respond to direct pings while suppressing ambient/automatic speech.
 - 033: Add pending dream follow-up threads with prompt-inclusion budget and expiry for the optional followups module.
 - 034: Add per-user warmth scores for the optional affinity module.
+- 035: Add per-Bottle recollection mode and activation cursor, processed conversation chunks with source provenance, and FTS5 recollection search.

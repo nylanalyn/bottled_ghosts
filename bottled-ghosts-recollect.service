@@ -1,0 +1,9 @@
+[Unit]
+Description=Bottled Ghosts conversation recollections
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/aureate/code/bottled_ghosts
+ExecStart=/home/aureate/code/bottled_ghosts/.venv/bin/bottled-ghosts --database /home/aureate/code/bottled_ghosts/spirits.db recollect-all

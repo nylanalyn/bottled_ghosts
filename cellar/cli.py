@@ -13,6 +13,9 @@ from cellar.dream_store import list_dreams
 from cellar.dreams import run_dream, run_sleeping_dream
 from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
 from cellar.runtime import run_bottle, run_bottles
+from cellar.recollections import (
+    archive_recollection, list_recollections, recollect, recollection_sources,
+)
 from cellar.memory_store import (
     approve_memory_candidate,
     approve_memory_candidates,
@@ -49,6 +52,7 @@ from cellar.storage import (
     set_bottle_enabled,
     set_llm_api_key,
     set_memory_extraction,
+    set_recollections_enabled,
     set_sasl_credentials,
     set_quit_message,
     set_server_password,
@@ -106,7 +110,10 @@ async def async_main(args: argparse.Namespace) -> None:
             for bottle in bottles:
                 state = "enabled" if bottle.enabled else "disabled"
                 channels = ",".join(bottle.channels)
-                memory = "memory:on" if bottle.extract_memories else "memory:off"
+                memory = (
+                    "recollections:on" if bottle.recollections_enabled else
+                    "sediment:on" if bottle.extract_memories else "memory:off"
+                )
                 print(f"{bottle.id}\t{state}\t{memory}\t{bottle.name}\t"
                       f"{bottle.nick}@{bottle.network}\t{channels}")
         elif args.command == "aliases":
@@ -173,6 +180,47 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"Memory extraction {'enabled' if enabled else 'disabled'} "
                   f"for Bottle {args.bottle_id}")
+        elif args.command == "recollections-mode":
+            enabled = args_enabled(args.state)
+            await set_recollections_enabled(
+                db, bottle_id=args.bottle_id, enabled=enabled, actor=args.actor,
+            )
+            print(f"Recollections {'enabled' if enabled else 'disabled'} "
+                  f"for Bottle {args.bottle_id}; restart its runtime to apply")
+        elif args.command == "recollect":
+            count = await recollect(
+                db, bottle=await load_bottle(db, args.bottle_id),
+                limit_chunks=args.limit_chunks,
+            )
+            print(f"Processed {count} conversation chunk(s)")
+        elif args.command == "recollect-all":
+            failures = 0
+            for active_bottle in await load_enabled_bottles(db):
+                if not active_bottle.recollections_enabled:
+                    continue
+                try:
+                    count = await recollect(
+                        db, bottle=active_bottle, limit_chunks=args.limit_chunks,
+                    )
+                    print(f"Bottle {active_bottle.id}: processed {count} chunk(s)")
+                except Exception:
+                    failures += 1
+                    logger.exception("recollection failed for Bottle %d", active_bottle.id)
+            if failures:
+                raise RuntimeError(f"recollection failed for {failures} Bottle(s)")
+        elif args.command == "recollections":
+            for item in await list_recollections(
+                db, bot_id=args.bottle_id, include_archived=args.archived,
+                limit=args.limit,
+            ):
+                print(f"{item['id']}\t{item['state']}\t{item['network']} "
+                      f"{item['channel']}\t{item['period_start']}\n  {item['summary']}")
+        elif args.command == "recollection-sources":
+            for item in await recollection_sources(db, recollection_id=args.id):
+                print(f"{item['id']}\t{item['timestamp']} <{item['speaker']}> {item['body']}")
+        elif args.command == "recollection-archive":
+            await archive_recollection(db, recollection_id=args.id, actor=args.actor)
+            print(f"Archived recollection {args.id}")
         elif args.command == "bottle-toggle":
             enabled = args_enabled(args.state)
             await set_bottle_enabled(
@@ -451,6 +499,34 @@ def main() -> None:
     memory_parser.add_argument("bottle_id", type=int)
     memory_parser.add_argument("state", choices=("on", "off"))
     memory_parser.add_argument("--actor", default="operator")
+    recollections_mode = commands.add_parser(
+        "recollections-mode", help="enable recollections and stop per-reply sediment"
+    )
+    recollections_mode.add_argument("bottle_id", type=int)
+    recollections_mode.add_argument("state", choices=("on", "off"))
+    recollections_mode.add_argument("--actor", default="operator")
+    recollect_parser = commands.add_parser(
+        "recollect", help="process closed conversation chunks for one Bottle"
+    )
+    recollect_parser.add_argument("bottle_id", type=int)
+    recollect_parser.add_argument("--limit-chunks", type=int, default=10)
+    recollect_all = commands.add_parser(
+        "recollect-all", help="process closed chunks for all enabled Bottles"
+    )
+    recollect_all.add_argument("--limit-chunks", type=int, default=10)
+    recollections_parser = commands.add_parser("recollections", help="list recollections")
+    recollections_parser.add_argument("bottle_id", type=int)
+    recollections_parser.add_argument("--archived", action="store_true")
+    recollections_parser.add_argument("--limit", type=int, default=50)
+    recollection_sources_parser = commands.add_parser(
+        "recollection-sources", help="show messages behind a recollection"
+    )
+    recollection_sources_parser.add_argument("id", type=int)
+    recollection_archive_parser = commands.add_parser(
+        "recollection-archive", help="remove a recollection from prompt retrieval"
+    )
+    recollection_archive_parser.add_argument("id", type=int)
+    recollection_archive_parser.add_argument("--actor", default="operator")
     bottle_toggle = commands.add_parser(
         "bottle-toggle", help="include or exclude a Bottle from run-all"
     )

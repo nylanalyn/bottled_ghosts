@@ -43,6 +43,9 @@ from cellar.memory_consolidation import (
     list_consolidation_proposals,
     reject_consolidation_proposal,
 )
+from cellar.recollections import (
+    archive_recollection, list_recollections, recollection_sources,
+)
 from cellar.alias_store import ALIAS_PATTERN, add_alias, delete_alias, list_aliases
 from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
 from cellar.irc import irc_casefold
@@ -91,6 +94,14 @@ class BottledGhostsApp(App[None]):
     }
     .memory-field { margin: 0 1; }
     #save-memory { margin: 1; width: 20; }
+    #recollections-list { height: 45%; border: solid $accent; }
+    #recollection-detail {
+        height: 1fr;
+        overflow-y: auto;
+        border: solid $secondary;
+        padding: 1 2;
+    }
+    #archive-recollection { margin: 1; width: 30; }
     #consolidation-list { height: 45%; border: solid $accent; }
     #consolidation-detail { height: 1fr; border: solid $secondary; padding: 1 2; }
     #accept-consolidation, #reject-consolidation { margin: 1; width: 24; }
@@ -134,6 +145,7 @@ class BottledGhostsApp(App[None]):
         self.db: aiosqlite.Connection | None = None
         self.selected_candidate_id: int | None = None
         self.selected_memory_id: int | None = None
+        self.selected_recollection_id: int | None = None
         self.selected_consolidation_id: int | None = None
         self.selected_bottle_id: int | None = None
         self.selected_module_name: str | None = None
@@ -174,6 +186,11 @@ class BottledGhostsApp(App[None]):
                 yield Input(placeholder="Confidence (0–1)", type="number",
                             id="memory-confidence", classes="memory-field")
                 yield Button("Save audited edit", id="save-memory", variant="primary")
+            with TabPane("Recollections", id="recollections-tab"):
+                yield DataTable(id="recollections-list")
+                yield Static("Select a recollection to inspect its sources.",
+                             id="recollection-detail")
+                yield Button("Archive selected recollection", id="archive-recollection")
             with TabPane("Consolidation", id="consolidation-tab"):
                 yield DataTable(id="consolidation-list")
                 yield Static(
@@ -284,6 +301,10 @@ class BottledGhostsApp(App[None]):
             "ID", "Bottle", "User", "Type", "Confidence", "Evidence", "Expires",
             "Memory",
         )
+        recollection_table = self.query_one("#recollections-list", DataTable)
+        recollection_table.cursor_type = "row"
+        recollection_table.zebra_stripes = True
+        recollection_table.add_columns("ID", "Room", "When", "Recollection")
         consolidation_table = self.query_one("#consolidation-list", DataTable)
         consolidation_table.cursor_type = "row"
         consolidation_table.zebra_stripes = True
@@ -327,6 +348,7 @@ class BottledGhostsApp(App[None]):
         await self.refresh_dashboard()
         await self.refresh_sediment()
         await self.refresh_memories()
+        await self.refresh_recollections()
         await self.refresh_consolidations()
         await self.refresh_modules()
         await self.refresh_configuration()
@@ -344,7 +366,9 @@ class BottledGhostsApp(App[None]):
                 str(bottle.id), "yes" if bottle.enabled else "no",
                 "running" if bottle.id in self.running_bottles else "stopped", bottle.name,
                 f"{bottle.nick}@{bottle.network}", ",".join(bottle.channels),
-                "on" if bottle.extract_memories else "off", str(bottle.pending_candidates),
+                "recollections" if bottle.recollections_enabled else
+                "sediment" if bottle.extract_memories else "off",
+                str(bottle.pending_candidates),
                 bottle.enabled_modules or "—", bottle.last_activity or "—",
                 key=str(bottle.id),
             )
@@ -362,6 +386,7 @@ class BottledGhostsApp(App[None]):
             self.selected_bottle_id = row_id
             self.creating_bottle = False
             await self.show_logs(row_id)
+            await self.refresh_recollections()
             await self.refresh_modules()
             await self.refresh_configuration()
             await self.refresh_ignore_rules()
@@ -373,6 +398,10 @@ class BottledGhostsApp(App[None]):
             row_id = int(str(event.row_key.value))
             self.selected_memory_id = row_id
             await self.show_memory(row_id)
+        elif event.data_table.id == "recollections-list":
+            row_id = int(str(event.row_key.value))
+            self.selected_recollection_id = row_id
+            await self.show_recollection(row_id)
         elif event.data_table.id == "consolidation-list":
             row_id = int(str(event.row_key.value))
             self.selected_consolidation_id = row_id
@@ -420,6 +449,51 @@ class BottledGhostsApp(App[None]):
             await self.show_candidate(candidates[0].id)
         else:
             self.query_one("#candidate-detail", Static).update("No pending sediment.")
+
+    async def refresh_recollections(self) -> None:
+        table = self.query_one("#recollections-list", DataTable)
+        table.clear()
+        if self.db is None or self.selected_bottle_id is None:
+            self.selected_recollection_id = None
+            self.query_one("#recollection-detail", Static).update("No Bottle selected.")
+            return
+        items = await list_recollections(
+            self.db, bot_id=self.selected_bottle_id, limit=100,
+        )
+        for item in items:
+            table.add_row(
+                str(item["id"]), f"{item['network']} {item['channel']}",
+                str(item["period_start"]), str(item["summary"]),
+                key=str(item["id"]),
+            )
+        self.selected_recollection_id = int(items[0]["id"]) if items else None
+        if self.selected_recollection_id is not None:
+            await self.show_recollection(self.selected_recollection_id)
+        else:
+            self.query_one("#recollection-detail", Static).update("No recollections.")
+
+    async def show_recollection(self, recollection_id: int) -> None:
+        if self.db is None:
+            return
+        sources = await recollection_sources(self.db, recollection_id=recollection_id)
+        lines = "\n".join(
+            f"{row['timestamp']} <{row['speaker']}> {row['body']}" for row in sources
+        )
+        self.query_one("#recollection-detail", Static).update(
+            Text(f"Recollection {recollection_id}\n\nSource messages:\n{lines}")
+        )
+
+    async def action_archive_recollection(self) -> None:
+        if self.db is None or self.selected_recollection_id is None:
+            self.notify("No recollection selected", severity="warning")
+            return
+        recollection_id = self.selected_recollection_id
+        await archive_recollection(
+            self.db, recollection_id=recollection_id, actor=self.actor,
+        )
+        self.notify(f"Archived recollection {recollection_id}")
+        await self.refresh_recollections()
+        await self.refresh_audit()
 
     async def show_candidate(self, candidate_id: int) -> None:
         if self.db is None:
@@ -532,6 +606,8 @@ class BottledGhostsApp(App[None]):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save-memory":
             await self.action_save_memory()
+        elif event.button.id == "archive-recollection":
+            await self.action_archive_recollection()
         elif event.button.id == "attach-candidate":
             await self.action_attach_candidate()
         elif event.button.id == "accept-consolidation":
@@ -720,6 +796,9 @@ class BottledGhostsApp(App[None]):
             return
         bottles = await dashboard_bottles(self.db)
         bottle = next(item for item in bottles if item.id == self.selected_bottle_id)
+        if bottle.recollections_enabled:
+            self.notify("Disable recollections before enabling sediment", severity="warning")
+            return
         await set_memory_extraction(
             self.db, bottle_id=bottle.id, enabled=not bottle.extract_memories,
             actor=self.actor,

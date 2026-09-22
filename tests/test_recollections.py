@@ -3,7 +3,11 @@ import pytest
 from cellar.models import IRCMessage, IRCProfile, LLMProfile
 from cellar.archive_filter import is_archive_noise
 from cellar.recollections import (
-    archive_recollection, list_recollections, recollect, relevant_recollections,
+    NO_CONTINUITY_RE,
+    archive_recollection,
+    list_recollections,
+    recollect,
+    relevant_recollections,
     recollection_sources,
 )
 from cellar.storage import (
@@ -25,6 +29,13 @@ from cellar.storage import (
 ])
 def test_archive_noise_is_narrow(body: str, expected: bool) -> None:
     assert is_archive_noise(body) is expected
+
+
+def test_no_continuity_marker_preserves_a_concrete_exception() -> None:
+    assert NO_CONTINUITY_RE.search("No lasting plans or decisions.")
+    assert not NO_CONTINUITY_RE.search(
+        "No decisions or plans beyond jelly trying the new router."
+    )
 
 
 @pytest.mark.asyncio
@@ -172,7 +183,7 @@ async def test_empty_recollection_advances_cursor(tmp_path, monkeypatch) -> None
         await db.commit()
 
         async def fake_complete(_profile, _messages) -> str:
-            return '{"summary":null}'
+            return '{"summary":"Casual chat. No lasting decisions or plans."}'
 
         monkeypatch.setattr("cellar.recollections.complete", fake_complete)
         bottle = await load_bottle(db, bottle_id)

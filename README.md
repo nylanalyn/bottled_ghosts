@@ -73,6 +73,10 @@ command-shaped `!word` lines when preparing long-term summaries. Those lines
 remain in the message log and recent live conversation, and recollection source
 links still show the full original chunk. A human plan discussed in prose can
 still be remembered. Existing summaries are unchanged.
+Generated summaries that themselves conclude there were no lasting plans,
+decisions, or useful continuity are recorded as empty processed chunks instead
+of searchable recollections. Transient health complaints and speculation are
+also excluded from recollection summaries.
 An addressed `remember that ...` or `remember this: ...` request still creates
 one pending semantic candidate for operator review. Ordinary conversation does
 not create semantic candidates in recollection mode. A request never becomes a

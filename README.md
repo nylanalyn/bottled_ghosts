@@ -68,15 +68,16 @@ use `--limit-chunks` to catch up. Recollection mode disables per-reply sediment
 extraction for that Bottle and starts with new messages. Restart the Bottle after changing modes. Recollections
 are fallible summaries, retrieved only within the same Bottle and conversation;
 private messages are not recalled into public rooms.
-Recollections and dreams skip `[Fishing]` and `[Hunt]` announcements and
-command-shaped `!word` lines when preparing long-term summaries. Those lines
+Recollections and dreams skip `[Fishing]`, `[Hunt]`, `[Banter]`, and `[Karma]`
+announcements and command-shaped `!word` lines when preparing long-term summaries,
+including those pasted inside another message. Those lines
 remain in the message log and recent live conversation, and recollection source
 links still show the full original chunk. A human plan discussed in prose can
 still be remembered. Existing summaries are unchanged.
-Generated summaries that themselves conclude there were no lasting plans,
-decisions, or useful continuity are recorded as empty processed chunks instead
-of searchable recollections. Transient health complaints and speculation are
-also excluded from recollection summaries.
+The recollection model makes an explicit keep/discard decision. Discarded chunks,
+and generated summaries that contradict that decision by concluding there was no
+lasting continuity, are recorded as empty processed chunks instead of searchable
+recollections. Transient health complaints and speculation are also excluded.
 An addressed `remember that ...` or `remember this: ...` request still creates
 one pending semantic candidate for operator review. Ordinary conversation does
 not create semantic candidates in recollection mode. A request never becomes a

@@ -18,13 +18,17 @@ from cellar.storage import (
 
 @pytest.mark.parametrize("body, expected", [
     ("[Fishing] alice caught a trout", True),
+    ("styx, [Fishing] alice caught a trout", True),
     ("  [Hunt] a duck appeared", True),
+    ("[Banter] The crows are watching", True),
+    ("[Karma] alice leveled up", True),
     ("!reel", True),
     ("!cast Red Void", True),
     ("!hyg", True),
     ("!local", True),
     ("! a surprised sentence", False),
     ("I want to !cast a line", False),
+    ("[11:08:23] <alice> !cast", True),
     ("Let's hold a fishing tournament Friday", False),
 ])
 def test_archive_noise_is_narrow(body: str, expected: bool) -> None:
@@ -56,6 +60,7 @@ async def test_game_traffic_stays_in_logs_but_not_recollections(tmp_path, monkey
             ("alice", "Let's hold a fishing tournament Friday", "alice", "00:00:02"),
             ("JeevesBot", "[Hunt] a duck appeared", None, "00:20:00"),
             ("alice", "!hyg", "alice", "00:20:01"),
+            ("alice", "[11:08:23] <alice> !cast", "alice", "00:20:02"),
         ]
         for speaker, body, user_id, time in messages:
             message_id = await log_message(
@@ -76,14 +81,14 @@ async def test_game_traffic_stays_in_logs_but_not_recollections(tmp_path, monkey
             assert "tournament Friday" in prompt[1]["content"]
             assert "[Fishing]" not in prompt[1]["content"]
             assert "!reel" not in prompt[1]["content"]
-            return '{"summary":"Alice proposed a fishing tournament for Friday."}'
+            return '{"keep":true,"summary":"Alice proposed a fishing tournament for Friday."}'
 
         monkeypatch.setattr("cellar.recollections.complete", fake_complete)
         assert await recollect(db, bottle=await load_bottle(db, bottle_id)) == 2
         assert calls == 1
         assert len(await list_recollections(db, bot_id=bottle_id)) == 1
         assert len(await recollection_sources(db, recollection_id=1)) == 3
-        assert (await (await db.execute("SELECT count(*) FROM messages")).fetchone())[0] == 5
+        assert (await (await db.execute("SELECT count(*) FROM messages")).fetchone())[0] == 6
         assert ("JeevesBot", "[Fishing] alice caught a trout") in await recent_messages(
             db, bot_id=bottle_id, network="local", channel="#one",
         )
@@ -133,7 +138,7 @@ async def test_recollections_are_scoped_restart_safe_and_audited(tmp_path, monke
         async def fake_complete(_profile, _messages) -> str:
             nonlocal calls
             calls += 1
-            return '{"summary":"Alice said the telescope was repaired."}'
+            return '{"keep":true,"summary":"Alice said the telescope was repaired."}'
 
         monkeypatch.setattr("cellar.recollections.complete", fake_complete)
         bottle = await load_bottle(db, bottle_id)
@@ -183,7 +188,7 @@ async def test_empty_recollection_advances_cursor(tmp_path, monkeypatch) -> None
         await db.commit()
 
         async def fake_complete(_profile, _messages) -> str:
-            return '{"summary":"Casual chat. No lasting decisions or plans."}'
+            return '{"keep":false,"summary":"Casual chat about the weather."}'
 
         monkeypatch.setattr("cellar.recollections.complete", fake_complete)
         bottle = await load_bottle(db, bottle_id)

@@ -35,6 +35,14 @@ async def test_dream_is_stored_without_private_reasoning(monkeypatch, tmp_path) 
             db, IRCMessage(network="local", channel="#test", speaker="alice",
                            body="!reel", bot_id=bottle_id),
         )
+        await log_message(
+            db, IRCMessage(network="local", channel="#test", speaker="alice",
+                           body="styx, [Fishing] I caught a Quantum Carp", bot_id=bottle_id),
+        )
+        await log_message(
+            db, IRCMessage(network="local", channel="#test", speaker="alice",
+                           body="[11:08:23] <alice> !cast", bot_id=bottle_id),
+        )
         await db.execute(
             """INSERT INTO summaries(bot_id, period_start, period_end, summary)
                VALUES (?, '2020-01-01', '2020-01-02', 'historical mixed summary')""",
@@ -55,6 +63,8 @@ async def test_dream_is_stored_without_private_reasoning(monkeypatch, tmp_path) 
             assert "private secret" not in messages[1]["content"]
             assert "[Fishing]" not in messages[1]["content"]
             assert "!reel" not in messages[1]["content"]
+            assert "Quantum Carp" not in messages[1]["content"]
+            assert "11:08:23" not in messages[1]["content"]
             return "<think>private notes</think>\nThe telescope returned to service."
 
         monkeypatch.setattr("cellar.dreams.complete", fake_complete)

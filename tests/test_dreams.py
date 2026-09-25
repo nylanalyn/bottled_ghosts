@@ -57,7 +57,8 @@ async def test_dream_is_stored_without_private_reasoning(monkeypatch, tmp_path) 
         assert len(selected) == 1
         assert selected[0][3] == "The telescope is repaired"
 
-        async def fake_complete(_profile, messages) -> str:
+        async def fake_complete(profile, messages) -> str:
+            assert profile.max_tokens == 1536
             assert "Be a quiet archivist." in messages[0]["content"]
             assert "telescope is repaired" in messages[1]["content"]
             assert "private secret" not in messages[1]["content"]

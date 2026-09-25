@@ -82,8 +82,10 @@ async def test_complete_retries_on_429_then_succeeds(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_complete_raises_on_null_content(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": [{"message": {"content": None}}]})
+        return httpx.Response(200, json={"choices": [
+            {"message": {"content": None}, "finish_reason": "length"}
+        ]})
 
     _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="finish_reason='length'"):
         await complete(_profile(), [{"role": "user", "content": "hi"}])

@@ -154,11 +154,18 @@ async def _summarize(
         )},
     ]
     profile = bottle.llm.model_copy(update={
-        "temperature": 0.0, "max_tokens": 350,
+        "temperature": 0.0, "max_tokens": 1024,
         "frequency_penalty": 0.0, "presence_penalty": 0.0,
     })
-    raw = strip_private_reasoning(await complete(profile, prompt))
-    parsed = RecollectionResult.model_validate_json(FENCE_RE.sub("", raw.strip()))
+    try:
+        raw = strip_private_reasoning(await complete(profile, prompt))
+        parsed = RecollectionResult.model_validate_json(FENCE_RE.sub("", raw.strip()))
+    except ValueError:
+        logger.warning("retrying invalid recollection for Bottle %d %s with more tokens",
+                       bottle.id, channel)
+        retry_profile = profile.model_copy(update={"max_tokens": 2048})
+        raw = strip_private_reasoning(await complete(retry_profile, prompt))
+        parsed = RecollectionResult.model_validate_json(FENCE_RE.sub("", raw.strip()))
     if not parsed.keep or parsed.summary is None:
         return None
     summary = parsed.summary.strip()

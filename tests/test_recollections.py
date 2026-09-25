@@ -187,12 +187,28 @@ async def test_empty_recollection_advances_cursor(tmp_path, monkeypatch) -> None
         )
         await db.commit()
 
-        async def fake_complete(_profile, _messages) -> str:
+        bottle = await load_bottle(db, bottle_id)
+        budgets: list[int] = []
+
+        async def failing_complete(profile, _messages) -> str:
+            budgets.append(profile.max_tokens)
+            raise ValueError("LLM response content must be a non-empty string")
+
+        monkeypatch.setattr("cellar.recollections.complete", failing_complete)
+        with pytest.raises(ValueError, match="non-empty string"):
+            await recollect(db, bottle=bottle)
+        assert budgets == [1024, 2048]
+        assert (await (await db.execute("SELECT count(*) FROM recollections")).fetchone())[0] == 0
+
+        async def fake_complete(profile, _messages) -> str:
+            budgets.append(profile.max_tokens)
+            if profile.max_tokens == 1024:
+                return '{"keep":false,'
             return '{"keep":false,"summary":"Casual chat about the weather."}'
 
         monkeypatch.setattr("cellar.recollections.complete", fake_complete)
-        bottle = await load_bottle(db, bottle_id)
         assert await recollect(db, bottle=bottle) == 1
+        assert budgets == [1024, 2048, 1024, 2048]
         assert await recollect(db, bottle=bottle) == 0
         assert await list_recollections(db, bot_id=bottle_id) == []
     finally:

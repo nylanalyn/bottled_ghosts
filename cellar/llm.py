@@ -33,5 +33,9 @@ async def complete(profile: LLMProfile, messages: list[dict[str, str]]) -> str:
     except (KeyError, IndexError, TypeError) as error:
         raise ValueError("LLM response did not contain message content") from error
     if not isinstance(content, str) or not content.strip():
-        raise ValueError("LLM response content must be a non-empty string")
+        finish_reason = data["choices"][0].get("finish_reason")
+        raise ValueError(
+            "LLM response content must be a non-empty string "
+            f"(finish_reason={finish_reason!r})"
+        )
     return content

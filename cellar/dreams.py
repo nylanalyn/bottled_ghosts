@@ -55,11 +55,22 @@ async def run_dream(
         {"role": "user", "content": transcript},
     ]
     profile = bottle.llm.model_copy(update={
-        "temperature": 0.3, "max_tokens": 1536,
+        "temperature": 0.3, "max_tokens": 3072,
         # dreams summarize; they should not avoid recurring topics the way chat does
         "frequency_penalty": 0.0, "presence_penalty": 0.0,
     })
-    summary_text = strip_private_reasoning(await complete(profile, prompt))
+    try:
+        summary_text = strip_private_reasoning(
+            await complete(profile, prompt, reject_truncated=True)
+        )
+        if not summary_text:
+            raise ValueError("dream summary was empty after removing private reasoning")
+    except ValueError:
+        logger.warning("retrying incomplete dream for Bottle %d with more tokens", bottle.id)
+        retry_profile = profile.model_copy(update={"max_tokens": 6144})
+        summary_text = strip_private_reasoning(
+            await complete(retry_profile, prompt, reject_truncated=True)
+        )
     if not summary_text:
         raise ValueError("dream summary was empty after removing private reasoning")
     summary = await store_dream(

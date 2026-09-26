@@ -57,8 +57,11 @@ async def test_dream_is_stored_without_private_reasoning(monkeypatch, tmp_path) 
         assert len(selected) == 1
         assert selected[0][3] == "The telescope is repaired"
 
-        async def fake_complete(profile, messages) -> str:
-            assert profile.max_tokens == 1536
+        budgets: list[int] = []
+
+        async def fake_complete(profile, messages, *, reject_truncated=False) -> str:
+            assert reject_truncated
+            budgets.append(profile.max_tokens)
             assert "Be a quiet archivist." in messages[0]["content"]
             assert "telescope is repaired" in messages[1]["content"]
             assert "private secret" not in messages[1]["content"]
@@ -66,11 +69,14 @@ async def test_dream_is_stored_without_private_reasoning(monkeypatch, tmp_path) 
             assert "!reel" not in messages[1]["content"]
             assert "Quantum Carp" not in messages[1]["content"]
             assert "11:08:23" not in messages[1]["content"]
+            if profile.max_tokens == 3072:
+                raise ValueError("LLM response was truncated (finish_reason='length')")
             return "<think>private notes</think>\nThe telescope returned to service."
 
         monkeypatch.setattr("cellar.dreams.complete", fake_complete)
         summary = await run_dream(db, bottle=await load_bottle(db, bottle_id), hours=24)
         assert summary is not None
+        assert budgets == [3072, 6144]
         assert summary.summary == "The telescope returned to service."
         assert summary.public_safe
         assert [item.id for item in await list_dreams(db, bot_id=bottle_id)] == [summary.id, 1]
@@ -122,7 +128,8 @@ async def test_sleeping_dream_restores_response_state(tmp_path, monkeypatch) -> 
                            body="The telescope is ready for morning", bot_id=bottle_id),
         )
 
-        async def fake_complete(_profile, _messages) -> str:
+        async def fake_complete(_profile, _messages, *, reject_truncated=False) -> str:
+            assert reject_truncated
             assert not await response_enabled(db, bottle_id=bottle_id)
             return "A peaceful night."
 
@@ -154,15 +161,21 @@ async def test_sleeping_dream_restores_state_after_failure(tmp_path, monkeypatch
                            body="The telescope is ready for morning", bot_id=bottle_id),
         )
 
-        async def failing_complete(_profile, _messages) -> str:
+        budgets: list[int] = []
+
+        async def failing_complete(profile, _messages, *, reject_truncated=False) -> str:
+            assert reject_truncated
+            budgets.append(profile.max_tokens)
             assert not await response_enabled(db, bottle_id=bottle_id)
-            raise RuntimeError("LLM unavailable")
+            raise ValueError("LLM response was truncated (finish_reason='length')")
 
         monkeypatch.setattr("cellar.dreams.complete", failing_complete)
-        with pytest.raises(RuntimeError, match="LLM unavailable"):
+        with pytest.raises(ValueError, match="response was truncated"):
             await run_sleeping_dream(
                 db, bottle=await load_bottle(db, bottle_id), actor="systemd-test",
             )
+        assert budgets == [3072, 6144]
+        assert await list_dreams(db, bot_id=bottle_id) == []
         assert await response_enabled(db, bottle_id=bottle_id)
         assert not await is_quiet(db, bottle_id=bottle_id)
     finally:

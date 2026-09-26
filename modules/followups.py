@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass
 
 import aiosqlite
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from cellar.llm import complete
 from cellar.memory import FENCE_RE
@@ -98,15 +98,16 @@ def _parse_extraction(raw: str) -> FollowupExtraction:
 
 async def extract_followup(profile: LLMProfile, summary: str) -> str | None:
     extraction_profile = profile.model_copy(update={
-        "temperature": 0.0, "max_tokens": 200,
+        "temperature": 0.0, "max_tokens": 1024,
         "frequency_penalty": 0.0, "presence_penalty": 0.0,
     })
-    raw = await complete(extraction_profile, _extraction_messages(summary))
+    messages = _extraction_messages(summary)
     try:
+        raw = await complete(extraction_profile, messages)
         parsed = _parse_extraction(raw)
-    except (json.JSONDecodeError, ValidationError):
-        retry_profile = extraction_profile.model_copy(update={"max_tokens": 400})
-        parsed = _parse_extraction(await complete(retry_profile, _extraction_messages(summary)))
+    except ValueError:
+        retry_profile = extraction_profile.model_copy(update={"max_tokens": 2048})
+        parsed = _parse_extraction(await complete(retry_profile, messages))
     text = (parsed.followup or "").strip()
     return text[:300] if text else None
 

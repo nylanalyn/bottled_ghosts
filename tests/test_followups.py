@@ -53,7 +53,12 @@ def test_parse_extraction_tolerates_fences() -> None:
 
 @pytest.mark.asyncio
 async def test_extract_followup_uses_model_reply(tmp_path) -> None:
-    async def fake_complete(_profile, _messages):
+    budgets: list[int] = []
+
+    async def fake_complete(profile, _messages):
+        budgets.append(profile.max_tokens)
+        if profile.max_tokens == 1024:
+            raise ValueError("LLM response content must be a non-empty string")
         return '```json\n{"followup": "did the canoe ever get finished?"}\n```'
 
     import modules.followups as followups_module
@@ -66,6 +71,7 @@ async def test_extract_followup_uses_model_reply(tmp_path) -> None:
     finally:
         followups_module.complete = original
     assert text == "did the canoe ever get finished?"
+    assert budgets == [1024, 2048]
 
 
 @pytest.mark.asyncio

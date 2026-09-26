@@ -6,7 +6,10 @@ import httpx
 from cellar.models import LLMProfile
 
 
-async def complete(profile: LLMProfile, messages: list[dict[str, str]]) -> str:
+async def complete(
+    profile: LLMProfile, messages: list[dict[str, str]], *,
+    reject_truncated: bool = False,
+) -> str:
     headers = {"Authorization": f"Bearer {profile.api_key}"} if profile.api_key else {}
     payload: dict[str, object] = {
         "model": profile.model, "messages": messages, "temperature": profile.temperature,
@@ -38,4 +41,6 @@ async def complete(profile: LLMProfile, messages: list[dict[str, str]]) -> str:
             "LLM response content must be a non-empty string "
             f"(finish_reason={finish_reason!r})"
         )
+    if reject_truncated and data["choices"][0].get("finish_reason") == "length":
+        raise ValueError("LLM response was truncated (finish_reason='length')")
     return content

@@ -89,3 +89,17 @@ async def test_complete_raises_on_null_content(monkeypatch) -> None:
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="finish_reason='length'"):
         await complete(_profile(), [{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.asyncio
+async def test_complete_can_reject_nonempty_truncated_content(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [
+            {"message": {"content": "unfinished"}, "finish_reason": "length"}
+        ]})
+
+    _patch_client(monkeypatch, handler)
+    messages = [{"role": "user", "content": "hi"}]
+    assert await complete(_profile(), messages) == "unfinished"
+    with pytest.raises(ValueError, match="response was truncated"):
+        await complete(_profile(), messages, reject_truncated=True)

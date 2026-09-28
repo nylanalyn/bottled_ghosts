@@ -41,13 +41,18 @@ class ModuleContext:
     request_response: bool = False
     suppress_automatic_response: bool = False
     monitor_when_silent: bool = False
-    response_reason: Literal["addressed", "ambient", "utility_event"] = "addressed"
+    response_reason: Literal["addressed", "ambient", "utility_event", "initiative"] = "addressed"
     module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
     prompt_sections: list[str] = field(default_factory=list)
     commands: list[ModuleCommand] = field(default_factory=list)
     room_break: RoomBreakRequest | None = None
     response: str | None = None
     generation_prompt: list[dict[str, str]] = field(default_factory=list)
+    # A module sets request_tone before generation to ask the model for a
+    # hidden exchange rating. After generation, tones maps each addressing
+    # speaker's user_id to a label from cellar.tone.TONE_LABELS.
+    request_tone: bool = False
+    tones: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -58,6 +63,24 @@ class NightlyContext:
     period_end: str
     summary: str
     module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
+
+
+@dataclass
+class IdleContext:
+    """One quiet-room check for one joined channel.
+
+    A module that wants the Bottle to open a conversation sets
+    ``initiative_note`` to the situation text shown to the model in place of
+    a current message. The runtime then generates, applies every normal
+    output limit, and sends at most one reply.
+    """
+
+    db: aiosqlite.Connection
+    bottle: Bottle
+    channel: str
+    bot_nick: str
+    module_settings: dict[str, dict[str, object]] = field(default_factory=dict)
+    initiative_note: str | None = None
 
 
 @dataclass
@@ -112,6 +135,15 @@ class ModuleRunner:
     async def nightly(self, ctx: NightlyContext) -> None:
         await self._run("nightly", ctx)
 
+    async def on_idle(self, ctx: IdleContext) -> None:
+        await self._run("on_idle", ctx)
+
+    def implements(self, hook: str) -> bool:
+        return any(
+            name not in self.disabled and callable(getattr(module, hook, None))
+            for name, module in self._named_modules
+        )
+
     async def start(self, ctx: RuntimeContext) -> None:
         self.runtime_state = ctx.state
         await self._run("start", ctx)
@@ -120,7 +152,8 @@ class ModuleRunner:
         await self._run("stop", ctx, reverse=True)
 
     async def _run(
-        self, hook: str, ctx: ModuleContext | NightlyContext | RuntimeContext,
+        self, hook: str,
+        ctx: ModuleContext | NightlyContext | RuntimeContext | IdleContext,
         *, reverse: bool = False,
     ) -> None:
         ctx.module_settings = self.settings

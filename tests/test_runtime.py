@@ -317,6 +317,9 @@ async def test_runtime_accumulates_one_window_and_runs_window_hooks_once(
     sent: list[tuple[str, str, str]] = []
 
     class FakeModules:
+        def implements(self, _hook: str) -> bool:
+            return False
+
         async def on_message(self, _context) -> None:
             hook_counts["on_message"] += 1
 
@@ -563,6 +566,9 @@ async def test_direct_messages_share_stable_incoming_and_outgoing_history(
     sent: list[tuple[str, str]] = []
 
     class FakeModules:
+        def implements(self, _hook: str) -> bool:
+            return False
+
         async def on_message(self, _context) -> None:
             return None
 
@@ -957,6 +963,9 @@ async def test_pings_from_several_people_share_one_reply(
     sent: list[tuple[str, str]] = []
 
     class FakeModules:
+        def implements(self, _hook: str) -> bool:
+            return False
+
         async def on_message(self, _context) -> None:
             return None
 
@@ -1028,5 +1037,56 @@ async def test_pings_from_several_people_share_one_reply(
             ("carol", "ghost: is the game on tonight?"),
             ("alice", "ghost: does anyone have a pump?"),
         ])
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_tone_tag_never_reaches_irc_and_feeds_affinity(monkeypatch, tmp_path) -> None:
+    from modules.affinity import Module as AffinityModule
+    soul = tmp_path / "soul.md"
+    soul.write_text("Be concise.", encoding="utf-8")
+    db = await open_database(tmp_path / "tone.db")
+    try:
+        bottle_id = await create_bottle(
+            db, name="test", soul_prompt_path=soul,
+            irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#test"]),
+            llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+            cooldown_seconds=0, listen_window_seconds=0.01,
+        )
+        sent: list[str] = []
+        prompts: list[str] = []
+
+        class FakeIRCClient:
+            def __init__(self, _profile, handler) -> None:
+                self.handler = handler
+
+            async def run(self) -> None:
+                await self.handler(IncomingIRCMessage(
+                    nick="alice", hostmask="a@host", account="alice",
+                    target="#test", body="ghost: you're the best",
+                ))
+                await asyncio.sleep(0.05)
+
+            async def send_message(self, _target: str, body: str) -> None:
+                sent.append(body)
+
+            async def send_action(self, _target: str, body: str) -> None:
+                sent.append(body)
+
+        async def fake_complete(_profile, prompt) -> str:
+            prompts.append(prompt[-1]["content"])
+            return "aw, thanks\n[tone: alice=warm]"
+
+        monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+        monkeypatch.setattr("cellar.runtime.complete", fake_complete)
+        runner = ModuleRunner([("affinity", AffinityModule())], {"affinity": {}})
+        await run_bottle_once(db, await load_bottle(db, bottle_id), runner)
+
+        assert sent == ["aw, thanks"]
+        assert "[tone: alice=neutral]" in prompts[0]
+        row = await (await db.execute("SELECT warmth FROM user_affinity")).fetchone()
+        assert row is not None and row[0] > 0.05
     finally:
         await db.close()

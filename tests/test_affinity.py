@@ -44,8 +44,14 @@ def _context(
     )
 
 
+def _rated(bottle, db, *, user_id: str, tone: str) -> ModuleContext:
+    ctx = _context(bottle, db, user_id=user_id)
+    ctx.tones = {user_id: tone}
+    return ctx
+
+
 @pytest.mark.asyncio
-async def test_addressed_exchanges_warm_and_saturate(tmp_path) -> None:
+async def test_warm_exchanges_warm_and_saturate(tmp_path) -> None:
     random.seed(7)
     db = await open_database(tmp_path / "warm.db")
     try:
@@ -53,7 +59,7 @@ async def test_addressed_exchanges_warm_and_saturate(tmp_path) -> None:
         user_id = await _user(db)
         module = Module()
         for _ in range(40):
-            await module.on_message(_context(bottle, db, user_id=user_id))
+            await module.after_response(_rated(bottle, db, user_id=user_id, tone="warm"))
         warmth = await current_warmth(db, bot_id=bottle.id, user_id=user_id)
         assert 0.6 < warmth <= 1.0
     finally:
@@ -61,15 +67,50 @@ async def test_addressed_exchanges_warm_and_saturate(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ambient_messages_do_not_count(tmp_path) -> None:
+async def test_hostile_exchanges_cool_a_friendship_faster_than_warmth_built_it(
+    tmp_path,
+) -> None:
+    random.seed(7)
+    db = await open_database(tmp_path / "hostile.db")
+    try:
+        bottle = await _bottle(db, tmp_path)
+        user_id = await _user(db)
+        module = Module()
+        for _ in range(3):
+            await module.after_response(_rated(bottle, db, user_id=user_id, tone="warm"))
+        warm = await current_warmth(db, bot_id=bottle.id, user_id=user_id)
+        await module.after_response(_rated(bottle, db, user_id=user_id, tone="hostile"))
+        after = await current_warmth(db, bot_id=bottle.id, user_id=user_id)
+        assert warm > 0.15
+        assert after < warm - 0.15
+        for _ in range(30):
+            await module.after_response(_rated(bottle, db, user_id=user_id, tone="hostile"))
+        assert await current_warmth(db, bot_id=bottle.id, user_id=user_id) < -0.55
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_unrated_exchanges_and_raw_messages_do_not_count(tmp_path) -> None:
     db = await open_database(tmp_path / "ambient.db")
     try:
         bottle = await _bottle(db, tmp_path)
         user_id = await _user(db)
-        await Module().on_message(
-            _context(bottle, db, user_id=user_id, reason="ambient")
-        )
+        await Module().on_message(_context(bottle, db, user_id=user_id))
+        await Module().after_response(_context(bottle, db, user_id=user_id))
         assert await current_warmth(db, bot_id=bottle.id, user_id=user_id) == 0.0
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_affinity_requests_a_tone_rating(tmp_path) -> None:
+    db = await open_database(tmp_path / "request.db")
+    try:
+        bottle = await _bottle(db, tmp_path)
+        ctx = _context(bottle, db, user_id=await _user(db))
+        await Module().before_prompt(ctx)
+        assert ctx.request_tone
     finally:
         await db.close()
 
@@ -87,7 +128,9 @@ async def test_silence_decays_warmth_toward_neutral(tmp_path) -> None:
             (bottle.id, user_id),
         )
         await db.commit()
-        await Module().on_message(_context(bottle, db, user_id=user_id))
+        await Module().after_response(
+            _rated(bottle, db, user_id=user_id, tone="neutral")
+        )
         warmth = await current_warmth(db, bot_id=bottle.id, user_id=user_id)
         # A full day of silence cools 0.8 to roughly 0.4 before the new gain.
         assert 0.2 < warmth < 0.6

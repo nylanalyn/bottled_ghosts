@@ -13,6 +13,7 @@ from cellar.dream_store import list_dreams
 from cellar.dreams import run_dream, run_sleeping_dream
 from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
 from cellar.runtime import run_bottle, run_bottles
+from cellar.self_memory import archive_self_memory, list_self_memories
 from cellar.recollections import (
     archive_recollection, list_recollections, recollect, recollection_sources,
 )
@@ -222,6 +223,16 @@ async def async_main(args: argparse.Namespace) -> None:
         elif args.command == "recollection-archive":
             await archive_recollection(db, recollection_id=args.id, actor=args.actor)
             print(f"Archived recollection {args.id}")
+        elif args.command == "self-memories":
+            for item in await list_self_memories(
+                db, bot_id=args.bottle_id, include_archived=args.archived,
+                limit=args.limit,
+            ):
+                print(f"{item['id']}\t{item['state']}\t{item['memory_type']}\t"
+                      f"x{item['times_said']}\t{item['last_said_at']}\n  {item['text']}")
+        elif args.command == "self-memory-archive":
+            await archive_self_memory(db, self_memory_id=args.id, actor=args.actor)
+            print(f"Archived self-memory {args.id}")
         elif args.command == "bottle-toggle":
             enabled = args_enabled(args.state)
             await set_bottle_enabled(
@@ -535,6 +546,17 @@ def main() -> None:
     )
     recollection_archive_parser.add_argument("id", type=int)
     recollection_archive_parser.add_argument("--actor", default="operator")
+    self_memories_parser = commands.add_parser(
+        "self-memories", help="list what a Bottle has said about itself"
+    )
+    self_memories_parser.add_argument("bottle_id", type=int)
+    self_memories_parser.add_argument("--archived", action="store_true")
+    self_memories_parser.add_argument("--limit", type=int, default=50)
+    self_memory_archive_parser = commands.add_parser(
+        "self-memory-archive", help="remove a self-memory from prompt retrieval"
+    )
+    self_memory_archive_parser.add_argument("id", type=int)
+    self_memory_archive_parser.add_argument("--actor", default="operator")
     bottle_toggle = commands.add_parser(
         "bottle-toggle", help="include or exclude a Bottle from run-all"
     )

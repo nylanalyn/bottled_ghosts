@@ -276,6 +276,64 @@ The current values, interaction heat, and latest deltas are inspectable in
 SQLite's `mood_state` table. Mood updates are message-driven; no background
 scheduler or room-sentiment classifier runs.
 
+When moods or affinity is enabled, an addressed reply also carries a hidden
+exchange rating. The model ends its reply with `[tone: nick=warm]` (one of
+`warm`, `neutral`, `cold`, `hostile` per person who addressed it), and the
+runtime always strips that line before anything is sent. Affinity warms or
+cools each rated person's score, and moods shift valence by the average
+rating and irritability by the harshest one. Tune how strongly a Bottle's
+mood reacts with `tone_sensitivity` (0 to 3, default 1; 0 turns it off):
+
+```bash
+bottled-ghosts module-settings 1 moods '{"profile":"aria","tone_sensitivity":0.7}' --actor aureate
+```
+
+A missing rating is logged and changes nothing. See ADR-020.
+
+Bottles in recollection mode also keep self-memories: while summarizing a
+public conversation, the recollection job records up to three lasting things
+the Bottle said about itself (tastes, opinions, its own projects, how it feels
+about someone, promises). They are stored without review and retrieved into
+later prompts as the Bottle's own earlier words, so it stays consistent.
+Private conversations never produce them. Inspect or retire them with:
+
+```bash
+bottled-ghosts self-memories 1
+bottled-ghosts self-memory-archive SELF_MEMORY_ID --actor aureate
+```
+
+Give a Bottle relationship notes with the optional relationships module. A
+note enters the prompt only when that person is speaking, spoke recently in
+the room, or is mentioned, so relationships show up in the moment instead of
+in every reply. Notes work for other Bottles and for people:
+
+```bash
+bottled-ghosts module-settings 1 relationships '{"people":{"frauderick":"your grumpy friend; you tease him about Arch and he pretends to hate it","bork":"the pug; impossible not to like"}}' --actor aureate
+bottled-ghosts module-toggle 1 relationships on --actor aureate
+```
+
+Optional `lookback_lines` (default 15) controls how far back "spoke
+recently" reaches. How each relationship is going day to day comes from
+affinity.
+
+Let a Bottle break a lull with the optional initiative module. While
+connected, the runtime checks each channel once a minute. The module offers
+the Bottle one opening only after a randomized quiet period, only if a human
+spoke within `human_recent_hours`, only if a human has spoken since the
+Bottle's last opener there, and at most `max_per_day` times per channel in 24
+hours. Lines from Bottles in this database, `other_bots`, and ambient chat's
+`utility_bot_nicks` never count as human. The model may still decline with
+`[pass]`, and openers obey every normal output limit, quiet mode, `off`,
+dream sleep, and mood breaks. Pending follow-up threads make natural openers:
+
+```bash
+bottled-ghosts module-settings 1 initiative '{"min_quiet_minutes":45,"max_quiet_minutes":180,"max_per_day":3,"human_recent_hours":12,"channels":["#fractalsignal"]}' --actor aureate
+bottled-ghosts module-toggle 1 initiative on --actor aureate
+```
+
+Every offer and whether the Bottle spoke or passed is recorded in the
+`initiative_events` table. See ADR-022.
+
 Dreaming is an explicit job rather than a hidden background scheduler:
 
 ```bash

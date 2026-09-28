@@ -19,6 +19,12 @@ MARKDOWN_EMPHASIS_RES = (
     re.compile(r"`([^`\n]+)`"),
 )
 BULLET_RE = re.compile(r"^[*•]\s+")
+# Modules may offer the model an explicit way to stay silent. Models decorate
+# the sentinel ("*[pass]*", "[PASS].", reasoning blocks) and the sanitizer
+# would strip that decoration and send a bare "[pass]" to the room, so the
+# whole reply is matched loosely instead of compared exactly.
+PASS_SENTINEL = "[pass]"
+PASS_RE = re.compile(r"^\W*\[pass\]\W*$", re.IGNORECASE)
 
 # Length-proportional send pacing so replies do not land instantly after the
 # listening window closes. Zero cap disables the pause; the test suite pins it
@@ -50,6 +56,10 @@ def strip_private_reasoning(text: str) -> str:
     if unclosed is not None:
         text = text[:unclosed.start()]
     return TAG_RE.sub("", text).strip()
+
+
+def is_pass(response: str) -> bool:
+    return PASS_RE.match(strip_private_reasoning(response)) is not None
 
 
 def strip_markdown_emphasis(line: str) -> str:

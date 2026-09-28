@@ -233,3 +233,19 @@ async def test_ambient_sample_rate_one_persists_every_line(tmp_path) -> None:
 
 def test_moods_is_available_module() -> None:
     assert "moods" in available_modules()
+
+
+def test_tone_reactions_follow_average_and_worst_treatment() -> None:
+    from modules.moods import _react_to_tone
+    settings = _settings()
+    start = Mood(0.0, 0.0, 3.0)
+    warm = _react_to_tone(start, settings, ["warm"])
+    hostile = _react_to_tone(start, settings, ["hostile"])
+    mixed = _react_to_tone(start, settings, ["warm", "warm", "hostile"])
+    assert warm.valence > 0 and warm.irritability < 0
+    assert hostile.valence < 0 and hostile.irritability > 0
+    # One hostile speaker still irritates as much as being alone with them.
+    assert mixed.irritability == hostile.irritability
+    assert mixed.interaction_heat == start.interaction_heat
+    dull = _react_to_tone(start, _settings(tone_sensitivity=0.0), ["hostile"])
+    assert dull == start

@@ -1,7 +1,9 @@
 """Persistent two-axis mood simulation.
 
 Mood is global per Bottle. Incoming interaction raises social satisfaction,
-while sustained interaction can raise irritability. Between interactions the
+while sustained interaction can raise irritability. After an addressed reply,
+the model's private exchange rating (see cellar.tone) nudges both axes: warmth
+lifts valence and calms, hostility lowers valence and irritates. Between interactions the
 state drifts toward the configured baseline, incurs a bounded quiet-time cost,
 and receives small random perturbations. All changes are lazy: IRC messages
 drive updates, so the module creates no hidden scheduler.
@@ -14,8 +16,12 @@ from dataclasses import dataclass
 import aiosqlite
 
 from cellar.module_api import ModuleContext, NightlyContext, RoomBreakRequest
+from cellar.tone import TONE_SCORES
 
 _MAX_ELAPSED_HOURS = 168.0
+# Per unit of tone score (warm +1 ... hostile -2) at tone_sensitivity 1.0.
+_TONE_VALENCE_GAIN = 0.05
+_TONE_IRRITABILITY_GAIN = 0.06
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,7 @@ class Settings:
     comfort_heat: float
     overload_gain: float
     ambient_sample_rate: float
+    tone_sensitivity: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -97,6 +104,7 @@ def _settings(ctx: ModuleContext) -> Settings:
         comfort_heat=_number(raw, "comfort_heat", 8.0, 0.0, 20.0),
         overload_gain=_number(raw, "overload_gain", 0.012, 0.0, 0.2),
         ambient_sample_rate=_number(raw, "ambient_sample_rate", 0.05, 0.0, 1.0),
+        tone_sensitivity=_number(raw, "tone_sensitivity", 1.0, 0.0, 3.0),
     )
 
 
@@ -144,6 +152,43 @@ def _interact(mood: Mood, settings: Settings, *, intensity: float = 1.0) -> Mood
         _clamp(mood.irritability + overload),
         heat,
     )
+
+
+def _react_to_tone(mood: Mood, settings: Settings, tones: list[str]) -> Mood:
+    """Apply one exchange's ratings; the harshest speaker weighs most.
+
+    Valence follows the average treatment. Irritability follows the worst of
+    it, because one hostile person in a friendly burst still stings.
+    """
+    scores = [TONE_SCORES[tone] for tone in tones]
+    average = sum(scores) / len(scores)
+    worst = min(scores)
+    valence_change = _TONE_VALENCE_GAIN * average * settings.tone_sensitivity
+    irritability_change = (
+        -_TONE_IRRITABILITY_GAIN * worst if worst < 0
+        else -_TONE_IRRITABILITY_GAIN * 0.3 * average
+    ) * settings.tone_sensitivity
+    return Mood(
+        _clamp(mood.valence + valence_change),
+        _clamp(mood.irritability + irritability_change),
+        mood.interaction_heat,
+    )
+
+
+async def _apply_tone(ctx: ModuleContext, settings: Settings) -> Mood:
+    previous = await _current(ctx, settings)
+    current = _react_to_tone(previous, settings, list(ctx.tones.values()))
+    await ctx.db.execute(
+        """UPDATE mood_state SET valence = ?, irritability = ?,
+               updated_at = CURRENT_TIMESTAMP, last_event = 'tone',
+               last_valence_delta = ?, last_irritability_delta = ?
+           WHERE bot_id = ?""",
+        (current.valence, current.irritability,
+         current.valence - previous.valence,
+         current.irritability - previous.irritability, ctx.bottle.id),
+    )
+    await ctx.db.commit()
+    return current
 
 
 async def _update(ctx: ModuleContext, settings: Settings, *, intensity: float = 1.0) -> Mood:
@@ -321,9 +366,11 @@ class Module:
 
     async def before_prompt(self, ctx: ModuleContext) -> None:
         ctx.prompt_sections.append(_format_note(await _current(ctx, _settings(ctx))))
+        ctx.request_tone = True
 
-    async def after_response(self, _ctx: ModuleContext) -> None:
-        return None
+    async def after_response(self, ctx: ModuleContext) -> None:
+        if ctx.tones:
+            await _apply_tone(ctx, _settings(ctx))
 
     async def nightly(self, _ctx: NightlyContext) -> None:
         return None

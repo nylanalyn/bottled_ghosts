@@ -3,9 +3,12 @@
 The moods module models the Bottle's global mood; this module keeps a small
 warmth score per person, so a regular who has been around all week feels
 different from a stranger or someone who has been rubbing the Bottle the
-wrong way. Addressed exchanges warm the score slightly (diminishing returns
-near the ends, plus a whisper of jitter so identical patterns diverge);
-silence cools it back toward neutral on an exponential schedule. When the
+wrong way. After each addressed exchange the replying model privately rates
+how the person treated the Bottle (see cellar.tone). Warm exchanges raise the
+score, cold and hostile ones lower it, and a neutral exchange adds a little
+familiarity. Changes have diminishing returns near the ends plus a whisper of
+jitter so identical patterns diverge; silence cools the score back toward
+neutral on an exponential schedule. When the
 score crosses the note threshold, the prompt mentions the standing impression
 and asks for subtle coloring — the same contract as moods: state is lazy,
 inspectable, and never announced to the room.
@@ -19,9 +22,15 @@ from dataclasses import dataclass
 import aiosqlite
 
 from cellar.module_api import ModuleContext, NightlyContext
+from cellar.tone import TONE_SCORES
 
 logger = logging.getLogger(__name__)
 _WARM_JITTER = 0.01
+# Multiples of the configured gain for one rated exchange. Neutral keeps the
+# old familiarity drift; hostility lands harder than warmth, as it does in
+# people.
+_TONE_GAIN_MULTIPLIERS = {"warm": 2.0, "neutral": 0.5, "cold": -2.0, "hostile": -5.0}
+assert set(_TONE_GAIN_MULTIPLIERS) == set(TONE_SCORES)
 _MAX_ELAPSED_HOURS = 24.0 * 14
 
 
@@ -55,10 +64,15 @@ def _clamp(value: float, minimum: float = -1.0, maximum: float = 1.0) -> float:
     return max(minimum, min(maximum, value))
 
 
-def warmed(current: float, settings: Settings) -> float:
-    """One addressed exchange applied to a decayed warmth score."""
-    gain = settings.gain * (1.0 - abs(current))
-    return _clamp(current + gain + random.gauss(0.0, _WARM_JITTER))
+def warmed(current: float, settings: Settings, tone: str = "neutral") -> float:
+    """One rated exchange applied to a decayed warmth score.
+
+    Movement shrinks as the score approaches the end it is moving toward, so
+    a long friendship survives one bad day and a feud thaws only gradually.
+    """
+    change = settings.gain * _TONE_GAIN_MULTIPLIERS[tone]
+    headroom = 1.0 - current if change > 0 else 1.0 + current
+    return _clamp(current + change * headroom + random.gauss(0.0, _WARM_JITTER))
 
 
 def warmth_label(warmth: float, threshold: float = 0.25) -> str:
@@ -73,12 +87,12 @@ def warmth_label(warmth: float, threshold: float = 0.25) -> str:
 
 
 async def _update(
-    ctx: ModuleContext, settings: Settings,
+    ctx: ModuleContext, settings: Settings, *, user_id: str, tone: str,
 ) -> float:
     row = await (await ctx.db.execute(
         """SELECT warmth, (julianday('now') - julianday(updated_at)) * 24.0
            FROM user_affinity WHERE bot_id = ? AND user_id = ?""",
-        (ctx.bottle.id, ctx.user_id),
+        (ctx.bottle.id, user_id),
     )).fetchone()
     if row is None:
         current = 0.0
@@ -89,13 +103,13 @@ async def _update(
     decayed = current + (0.0 - current) * (
         1.0 - math.exp(-settings.decay_per_hour * elapsed)
     )
-    warmth = warmed(decayed, settings)
+    warmth = warmed(decayed, settings, tone)
     await ctx.db.execute(
         """INSERT INTO user_affinity(bot_id, user_id, warmth, updated_at)
            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
            ON CONFLICT(bot_id, user_id) DO UPDATE SET
                warmth = excluded.warmth, updated_at = excluded.updated_at""",
-        (ctx.bottle.id, ctx.user_id, warmth),
+        (ctx.bottle.id, user_id, warmth),
     )
     await ctx.db.commit()
     return warmth
@@ -120,13 +134,12 @@ def _format_note(nick: str, warmth: float, threshold: float) -> str:
 
 
 class Module:
-    async def on_message(self, ctx: ModuleContext) -> None:
-        if not ctx.response_allowed or ctx.response_reason != "addressed":
-            return
-        await _update(ctx, _settings(ctx))
+    async def on_message(self, _ctx: ModuleContext) -> None:
+        return None
 
     async def before_prompt(self, ctx: ModuleContext) -> None:
         settings = _settings(ctx)
+        ctx.request_tone = True
         warmth = await current_warmth(ctx.db, bot_id=ctx.bottle.id, user_id=ctx.user_id)
         if abs(warmth) < settings.note_threshold:
             return
@@ -134,8 +147,16 @@ class Module:
             _format_note(ctx.message.nick, warmth, settings.note_threshold)
         )
 
-    async def after_response(self, _ctx: ModuleContext) -> None:
-        return None
+    async def after_response(self, ctx: ModuleContext) -> None:
+        if not ctx.tones:
+            return
+        settings = _settings(ctx)
+        for user_id, tone in ctx.tones.items():
+            warmth = await _update(ctx, settings, user_id=user_id, tone=tone)
+            logger.info(
+                "Bottle %d rated an exchange with %s as %s (warmth %+.2f)",
+                ctx.bottle.id, user_id, tone, warmth,
+            )
 
     async def nightly(self, _ctx: NightlyContext) -> None:
         return None

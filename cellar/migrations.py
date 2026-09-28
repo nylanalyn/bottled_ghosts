@@ -1062,6 +1062,102 @@ async def migration_037(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_038(db: aiosqlite.Connection) -> None:
+    """Allow mood updates caused by rated exchange tone."""
+    await db.executescript(
+        """
+        CREATE TABLE mood_state_new (
+            bot_id INTEGER PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
+            valence REAL NOT NULL CHECK (valence BETWEEN -1.0 AND 1.0),
+            irritability REAL NOT NULL CHECK (irritability BETWEEN -1.0 AND 1.0),
+            interaction_heat REAL NOT NULL DEFAULT 0.0 CHECK (interaction_heat >= 0.0),
+            last_interaction_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_event TEXT NOT NULL DEFAULT 'initial' CHECK (
+                last_event IN ('initial', 'interaction', 'tone')
+            ),
+            last_valence_delta REAL NOT NULL DEFAULT 0.0,
+            last_irritability_delta REAL NOT NULL DEFAULT 0.0
+        );
+        INSERT INTO mood_state_new SELECT
+            bot_id, valence, irritability, interaction_heat, last_interaction_at,
+            updated_at, last_event, last_valence_delta, last_irritability_delta
+        FROM mood_state;
+        DROP TABLE mood_state;
+        ALTER TABLE mood_state_new RENAME TO mood_state;
+        """
+    )
+
+
+async def migration_039(db: aiosqlite.Connection) -> None:
+    """Store what each Bottle has said about itself, for consistency."""
+    await db.executescript(
+        """
+        CREATE TABLE self_memories (
+            id INTEGER PRIMARY KEY,
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            memory_type TEXT NOT NULL CHECK (
+                memory_type IN ('preference', 'project', 'relationship', 'identity')
+            ),
+            text TEXT NOT NULL CHECK (length(text) BETWEEN 1 AND 200),
+            normalized_text TEXT NOT NULL,
+            recollection_id INTEGER REFERENCES recollections(id) ON DELETE SET NULL,
+            times_said INTEGER NOT NULL DEFAULT 1 CHECK (times_said >= 1),
+            first_said_at TEXT NOT NULL,
+            last_said_at TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'archived')),
+            archived_at TEXT,
+            UNIQUE(bot_id, normalized_text)
+        );
+        CREATE INDEX self_memories_bot_idx ON self_memories(bot_id, state, last_said_at DESC);
+        CREATE VIRTUAL TABLE self_memories_fts USING fts5(
+            text, content='self_memories', content_rowid='id'
+        );
+        CREATE TRIGGER self_memories_fts_insert AFTER INSERT ON self_memories BEGIN
+            INSERT INTO self_memories_fts(rowid, text) VALUES (new.id, new.text);
+        END;
+        CREATE TRIGGER self_memories_fts_delete AFTER DELETE ON self_memories BEGIN
+            INSERT INTO self_memories_fts(self_memories_fts, rowid, text)
+            VALUES ('delete', old.id, old.text);
+        END;
+        CREATE TRIGGER self_memories_fts_update AFTER UPDATE OF text ON self_memories BEGIN
+            INSERT INTO self_memories_fts(self_memories_fts, rowid, text)
+            VALUES ('delete', old.id, old.text);
+            INSERT INTO self_memories_fts(rowid, text) VALUES (new.id, new.text);
+        END;
+        """
+    )
+
+
+async def migration_040(db: aiosqlite.Connection) -> None:
+    """Persist quiet-room initiative cadence and every opening decision."""
+    await db.executescript(
+        """
+        CREATE TABLE initiative_state (
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            next_quiet_minutes INTEGER NOT NULL CHECK (next_quiet_minutes > 0),
+            last_initiative_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (bot_id, network, channel)
+        );
+        CREATE TABLE initiative_events (
+            id INTEGER PRIMARY KEY,
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            quiet_minutes INTEGER NOT NULL CHECK (quiet_minutes >= 0),
+            outcome TEXT NOT NULL DEFAULT 'offered'
+                CHECK (outcome IN ('offered', 'spoke', 'passed')),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX initiative_events_scope_idx
+            ON initiative_events(bot_id, network, channel, created_at DESC);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -1088,6 +1184,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_035,
     migration_036,
     migration_037,
+    migration_038,
+    migration_039,
+    migration_040,
 )
 
 

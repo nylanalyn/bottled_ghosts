@@ -162,7 +162,7 @@ Append-only history of explicit maintenance jobs. Columns: `id INTEGER PRIMARY K
 
 ## mood_state
 
-Stores the optional moods module's global per-Bottle state. Columns: `bot_id INTEGER PRIMARY KEY`, `valence REAL NOT NULL` (CHECK from -1.0 depressed to 1.0 ecstatic), `irritability REAL NOT NULL` (CHECK from -1.0 calm to 1.0 angry), `interaction_heat REAL NOT NULL DEFAULT 0.0` (CHECK nonnegative), `last_interaction_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_event TEXT NOT NULL DEFAULT 'initial'` (`initial` or `interaction`), `last_valence_delta REAL NOT NULL DEFAULT 0.0`, `last_irritability_delta REAL NOT NULL DEFAULT 0.0`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Updates happen lazily on incoming messages: elapsed time decays heat, pulls both axes toward configured baselines, applies bounded quiet-time loss and random drift, then applies attention and overload effects. The last event and deltas expose the most recent mutation for inspection.
+Stores the optional moods module's global per-Bottle state. Columns: `bot_id INTEGER PRIMARY KEY`, `valence REAL NOT NULL` (CHECK from -1.0 depressed to 1.0 ecstatic), `irritability REAL NOT NULL` (CHECK from -1.0 calm to 1.0 angry), `interaction_heat REAL NOT NULL DEFAULT 0.0` (CHECK nonnegative), `last_interaction_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`, `last_event TEXT NOT NULL DEFAULT 'initial'` (`initial`, `interaction`, or `tone`), `last_valence_delta REAL NOT NULL DEFAULT 0.0`, `last_irritability_delta REAL NOT NULL DEFAULT 0.0`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Updates happen lazily on incoming messages: elapsed time decays heat, pulls both axes toward configured baselines, applies bounded quiet-time loss and random drift, then applies attention and overload effects. After an addressed reply, the model's private exchange rating (warm, neutral, cold, hostile) shifts valence by the average rating and irritability by the harshest one, recorded as a `tone` event. The last event and deltas expose the most recent mutation for inspection.
 
 ## mood_room_breaks
 
@@ -175,6 +175,22 @@ Stores at most a few pending "unfinished threads" the optional followups module 
 ## user_affinity
 
 Stores the optional affinity module's per-person warmth score. Columns: `bot_id INTEGER NOT NULL`, `user_id TEXT NOT NULL`, `warmth REAL NOT NULL DEFAULT 0.0` (CHECK between -1.0 and 1.0), `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, user_id)`. Foreign keys: `bot_id` references `bots(id)` and `user_id` references `users(id)`, both with cascading deletion. Updates happen lazily on addressed messages: elapsed time decays warmth toward neutral on an exponential schedule, then a gain scaled by remaining headroom plus small jitter is applied. `before_prompt` surfaces the score as a tone note only when its magnitude crosses the configured threshold.
+
+## self_memories
+
+Stores durable things a Bottle said about itself, extracted automatically by the recollection job from public-channel chunks (never from `@` private conversations). Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `memory_type TEXT NOT NULL` (CHECK `preference`, `project`, `relationship`, or `identity`), `text TEXT NOT NULL` (CHECK 1–200 characters, first person), `normalized_text TEXT NOT NULL`, `recollection_id INTEGER` (the most recent chunk that produced it), `times_said INTEGER NOT NULL DEFAULT 1` (CHECK at least 1), `first_said_at TEXT NOT NULL`, `last_said_at TEXT NOT NULL`, `state TEXT NOT NULL DEFAULT 'active'` (CHECK `active` or `archived`), `archived_at TEXT`. Unique constraint: `(bot_id, normalized_text)`; a repeat increments `times_said` and advances `last_said_at`, and an archived row stays archived. Foreign keys: `bot_id` references `bots(id)` with cascading deletion; `recollection_id` references `recollections(id)` with `ON DELETE SET NULL`. Index: `self_memories_bot_idx(bot_id, state, last_said_at DESC)`. There is no review queue: these describe only the Bottle's own voice and never become facts about users. Active rows are retrieved per reply by exact FTS match for Bottles in recollection mode. Archiving appends a `self_memory:archive` maintenance event.
+
+## self_memories_fts
+
+External-content FTS5 index over `self_memories.text`, kept in sync by `self_memories_fts_insert`, `self_memories_fts_delete`, and `self_memories_fts_update` triggers.
+
+## initiative_state
+
+Stores the optional initiative module's per-channel cadence. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `next_quiet_minutes INTEGER NOT NULL` (CHECK positive; the randomized lull length required before the next offer, re-drawn after each offer), `last_initiative_at TEXT` (when the Bottle last offered an opening here; a human must speak after it before another offer), `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
+
+## initiative_events
+
+Append-style record of every quiet-room opening offered to a Bottle. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `quiet_minutes INTEGER NOT NULL` (CHECK nonnegative; how long the room had been quiet), `outcome TEXT NOT NULL DEFAULT 'offered'` (CHECK `offered`, `spoke`, or `passed`; updated once after generation), `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `initiative_events_scope_idx(bot_id, network, channel, created_at DESC)`. Offers in the last 24 hours count toward the module's `max_per_day` cap whether or not the model spoke.
 
 ## Migration history
 
@@ -214,3 +230,7 @@ Stores the optional affinity module's per-person warmth score. Columns: `bot_id 
 - 034: Add per-user warmth scores for the optional affinity module.
 - 035: Add per-Bottle recollection mode and activation cursor, processed conversation chunks with source provenance, and FTS5 recollection search.
 - 036: Mark newly generated public-channel dreams safe for prompt use; keep historical summaries unmarked.
+- 037: Add per-Bottle IRC presence heartbeat so absence notes measure real downtime, not channel silence.
+- 038: Rebuild `mood_state` so `last_event` also accepts `tone` for mood changes caused by rated exchange tone.
+- 039: Add automatic, FTS-searchable self-memories extracted from public recollection chunks.
+- 040: Add quiet-room initiative cadence state and an inspectable log of every opening offer and its outcome.

@@ -24,9 +24,11 @@ from cellar.llm import complete
 from cellar.memory import explicit_memory_request, extract_candidates
 from cellar.memory_store import approved_memory_texts, store_memory_candidates
 from cellar.recollections import relevant_recollections
+from cellar.self_memory import relevant_self_memories
 from cellar.dream_store import recent_dream_texts
 from cellar.models import Bottle, IRCMessage, IncomingIRCMessage
 from cellar.module_api import (
+    IdleContext,
     ModuleCommand, RoomBreakRequest,
     ModuleContext,
     ModuleRunner,
@@ -37,12 +39,14 @@ from cellar.module_loader import load_modules
 from cellar.prompt import build_prompt, read_soul
 from cellar.safety import Cooldown, sanitize, typing_pause
 from cellar.storage import log_message, open_database, recent_messages, search_messages
+from cellar.tone import split_tone, tone_instruction
 
 logger = logging.getLogger(__name__)
 MOOD_BREAK_SECONDS = 30 * 60
 MOOD_BREAK_FALLBACK = "I'm too annoyed to be good company. I need thirty minutes to breathe."
 ABSENCE_NOTE_MIN_MINUTES = 10
 PRESENCE_HEARTBEAT_SECONDS = 60.0
+IDLE_TICK_SECONDS = 60.0
 
 
 def absence_gap_text(minutes: int) -> str:
@@ -219,6 +223,104 @@ async def run_bottle_once(
     def active_nick() -> str:
         return getattr(client, "current_nick", bottle.irc.nick)
 
+    async def send_lines(lines: list[str], *, reply_target: str, channel: str) -> None:
+        """Send already-sanitized lines with pacing, cooldown, and logging."""
+        for line in lines:
+            # Read-then-type pacing before the flood-protection cooldown so
+            # replies arrive at a human rhythm rather than instantly.
+            await typing_pause(line)
+            await cooldown.wait()
+            action_body = (
+                line[4:].strip()
+                if line[:4].casefold() == "/me " and line[4:].strip()
+                else None
+            )
+            if action_body is not None:
+                await client.send_action(reply_target, action_body)
+            else:
+                await client.send_message(reply_target, line)
+            async with database_lock:
+                await log_message(
+                    db, IRCMessage(network=bottle.irc.network, channel=channel,
+                                   speaker=active_nick(), body=line, bot_id=bottle.id),
+                )
+        logger.info("sent %d reply line(s) to %s", len(lines), reply_target)
+
+    async def add_availability(module_context: ModuleContext) -> None:
+        availability = await away_status(db, bottle_id=bottle.id)
+        if availability is not None:
+            module_context.prompt_sections.append(
+                "Operator-set availability status: "
+                f"{availability!r}. If asked where you are or whether you are available, "
+                "answer consistently with this status without claiming more certainty."
+            )
+
+    async def initiate(channel: str, note: str, source_message_id: int) -> None:
+        """Offer the Bottle one chance to open a conversation in a quiet room."""
+        if irc_casefold(channel) in stepping_away_channels:
+            return
+        module_context = ModuleContext(
+            db=db, bottle=bottle,
+            message=IncomingIRCMessage(
+                nick="", hostmask=None, account=None, target=channel, body="",
+            ),
+            user_id="", source_message_id=source_message_id,
+            conversation=channel, bot_nick=active_nick(),
+            response_reason="initiative",
+        )
+        logger.info("offering an opening line in quiet %s", channel)
+        async with database_lock:
+            history = await recent_messages(
+                db, bot_id=bottle.id, network=bottle.irc.network, channel=channel,
+            )
+            # With no current message, the last few room lines stand in as the
+            # retrieval query so recalled context still fits the room.
+            query = "\n".join(text for _nick, text in history[-5:])
+            relevant = await search_messages(
+                db, bot_id=bottle.id, network=bottle.irc.network, channel=channel,
+                text=query, exclude_message_ids=[source_message_id],
+            )
+            dreams = await recent_dream_texts(db, bot_id=bottle.id)
+            recollections = (
+                await relevant_recollections(
+                    db, bot_id=bottle.id, network=bottle.irc.network,
+                    channel=channel, query_text=query,
+                ) if bottle.recollections_enabled else []
+            )
+            self_memories = (
+                await relevant_self_memories(db, bot_id=bottle.id, query_text=query)
+                if bottle.recollections_enabled else []
+            )
+            await add_availability(module_context)
+            await modules.before_prompt(module_context)
+        module_context.generation_prompt = build_prompt(
+            soul=soul, module_state=module_context.prompt_sections, memories=[],
+            dreams=dreams, relevant=relevant, history=history, speaker="", body="",
+            recollections=recollections, self_memories=self_memories,
+            bot_nicks=(active_nick(),),
+            local_time=local_datetime_context(bottle.timezone),
+            initiative=note,
+        )
+        await modules.before_generation(module_context)
+        module_context.response, _ = split_tone(
+            await complete(bottle.llm, module_context.generation_prompt), (),
+        )
+        async with database_lock:
+            await modules.after_response(module_context)
+            # Re-checked after generation: an operator may have silenced the
+            # Bottle, or a dream may have started, while the model was busy.
+            allowed = (
+                await response_enabled(db, bottle_id=bottle.id)
+                and not await is_quiet(db, bottle_id=bottle.id)
+            )
+        if not allowed or irc_casefold(channel) in stepping_away_channels:
+            return
+        lines = sanitize(
+            module_context.response or "", max_lines=bottle.max_lines,
+            max_chars=bottle.max_chars, bot_nick=active_nick(),
+        )
+        await send_lines(lines, reply_target=channel, channel=channel)
+
     async def respond(
         items: tuple[WindowMessage, ...], *, departure_request: RoomBreakRequest | None = None,
     ) -> None:
@@ -236,6 +338,7 @@ async def run_bottle_once(
         module_context = ModuleContext(
             db=db, bottle=bottle, message=message, user_id=user_id,
             source_message_id=latest.message_id,
+            conversation=channel, bot_nick=active_nick(),
             response_reason=(
                 "addressed" if any(item.addressed for item in items)
                 else "utility_event"
@@ -279,13 +382,11 @@ async def run_bottle_once(
                     channel=channel, query_text=body,
                 ) if bottle.recollections_enabled else []
             )
-            availability = await away_status(db, bottle_id=bottle.id)
-            if availability is not None:
-                module_context.prompt_sections.append(
-                    "Operator-set availability status: "
-                    f"{availability!r}. If asked where you are or whether you are available, "
-                    "answer consistently with this status without claiming more certainty."
-                )
+            self_memories = (
+                await relevant_self_memories(db, bot_id=bottle.id, query_text=body)
+                if bottle.recollections_enabled else []
+            )
+            await add_availability(module_context)
             await modules.before_prompt(module_context)
             if departure_request is not None:
                 module_context.prompt_sections.append(
@@ -294,10 +395,18 @@ async def run_bottle_once(
                     "and need to step away for about thirty minutes. Do not name or insult anyone, "
                     "debate the decision, ask a question, or explain the mood system."
                 )
+            # Only people who spoke to the Bottle are rated; ambient lines
+            # riding along in the window were not directed at it.
+            rated_speakers = tuple(dict.fromkeys(
+                item.message.nick for item in items if item.addressed
+            ))
+            if module_context.request_tone and rated_speakers:
+                module_context.prompt_sections.append(tone_instruction(rated_speakers))
         prompt = build_prompt(
             soul=soul, module_state=module_context.prompt_sections, memories=memories,
             dreams=dreams, relevant=relevant, history=history, speaker=speaker, body=body,
             recollections=recollections,
+            self_memories=self_memories,
             bot_nicks=(active_nick(),),
             addressed=any(item.addressed for item in items),
             local_time=local_datetime_context(bottle.timezone),
@@ -305,7 +414,16 @@ async def run_bottle_once(
         )
         module_context.generation_prompt = prompt
         await modules.before_generation(module_context)
-        response = await complete(bottle.llm, module_context.generation_prompt)
+        response, nick_tones = split_tone(
+            await complete(bottle.llm, module_context.generation_prompt), rated_speakers,
+        )
+        if module_context.request_tone:
+            user_by_nick = {irc_casefold(item.message.nick): item.user_id for item in items}
+            module_context.tones = {
+                user_by_nick[nick]: label for nick, label in nick_tones.items()
+            }
+            if rated_speakers and not nick_tones:
+                logger.info("model omitted the requested exchange tone rating")
         module_context.response = response
         async with database_lock:
             await modules.after_response(module_context)
@@ -326,26 +444,7 @@ async def run_bottle_once(
             )
         if not lines and module_context.response is not None:
             logger.warning("LLM response was empty after sanitization")
-        for line in lines:
-            # Read-then-type pacing before the flood-protection cooldown so
-            # replies arrive at a human rhythm rather than instantly.
-            await typing_pause(line)
-            await cooldown.wait()
-            action_body = (
-                line[4:].strip()
-                if line[:4].casefold() == "/me " and line[4:].strip()
-                else None
-            )
-            if action_body is not None:
-                await client.send_action(reply_target, action_body)
-            else:
-                await client.send_message(reply_target, line)
-            async with database_lock:
-                await log_message(
-                    db, IRCMessage(network=bottle.irc.network, channel=channel,
-                                   speaker=active_nick(), body=line, bot_id=bottle.id),
-                )
-        logger.info("sent %d reply line(s) to %s", len(lines), reply_target)
+        await send_lines(lines, reply_target=reply_target, channel=channel)
         if (bottle.extract_memories or bottle.recollections_enabled) and replies_enabled:
             try:
                 # A grouped window carries lines from several people; extract
@@ -638,6 +737,42 @@ async def run_bottle_once(
                 await record_presence(db, bottle_id=bottle.id)
             await asyncio.sleep(PRESENCE_HEARTBEAT_SECONDS)
 
+    async def idle_ticker() -> None:
+        """Ask modules once a minute whether to open a quiet room.
+
+        Only started when an enabled module implements on_idle. Each decision
+        and its state live in that module's SQLite tables.
+        """
+        while True:
+            await asyncio.sleep(IDLE_TICK_SECONDS)
+            if not connected.is_set():
+                continue
+            for channel in bottle.irc.channels:
+                if irc_casefold(channel) in stepping_away_channels:
+                    continue
+                try:
+                    async with database_lock:
+                        if (
+                            not await response_enabled(db, bottle_id=bottle.id)
+                            or await is_quiet(db, bottle_id=bottle.id)
+                        ):
+                            break
+                        idle = IdleContext(
+                            db=db, bottle=bottle, channel=channel, bot_nick=active_nick(),
+                        )
+                        await modules.on_idle(idle)
+                        source = await (await db.execute(
+                            """SELECT MAX(id) FROM messages
+                               WHERE bot_id = ? AND network = ? AND channel = ?""",
+                            (bottle.id, bottle.irc.network, channel),
+                        )).fetchone()
+                    if idle.initiative_note is not None and source and source[0]:
+                        await initiate(channel, idle.initiative_note, int(source[0]))
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("quiet-room check failed in %s", channel)
+
     def on_connection_state(is_connected: bool) -> None:
         nonlocal ever_connected
         if is_connected:
@@ -668,14 +803,17 @@ async def run_bottle_once(
     client.kick_handler = on_kick
     client.join_handler = on_join
     client.connection_state_handler = on_connection_state
-    heartbeat = asyncio.create_task(
+    background = [asyncio.create_task(
         presence_heartbeat(), name=f"presence-{bottle.id}",
-    )
+    )]
+    if modules.implements("on_idle"):
+        background.append(asyncio.create_task(idle_ticker(), name=f"idle-{bottle.id}"))
     try:
         await client.run()
     finally:
-        heartbeat.cancel()
-        await asyncio.gather(heartbeat, return_exceptions=True)
+        for task in background:
+            task.cancel()
+        await asyncio.gather(*background, return_exceptions=True)
         if ever_connected:
             # Close out presence at the disconnect itself rather than at the
             # last heartbeat, so a restart measures the gap precisely.

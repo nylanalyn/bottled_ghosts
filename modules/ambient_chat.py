@@ -1,10 +1,9 @@
 import logging
 import random
-import re
 
 from cellar.irc import irc_casefold, mentions_any_nick
 from cellar.module_api import ModuleContext, NightlyContext
-from cellar.safety import strip_private_reasoning
+from cellar.safety import PASS_SENTINEL, is_pass
 
 logger = logging.getLogger(__name__)
 
@@ -13,18 +12,11 @@ DEFAULT_MAX_LINES = 40
 DEFAULT_UTILITY_MIN_LINES = 8
 DEFAULT_UTILITY_MAX_LINES = 15
 
-# Offered to the model on ambient/utility triggers so unprompted speech is an
-# option, not an obligation. Real regulars ignore most of what scrolls past;
-# forcing a line every trigger is what produces spectator commentary.
-PASS_SENTINEL = "[pass]"
-# Models decorate the sentinel ("*[pass]*", "[PASS].", reasoning blocks). The
-# sanitizer would strip that decoration and send a bare "[pass]" to the room,
-# so match the whole reply loosely instead of comparing it exactly.
-PASS_RE = re.compile(r"^\W*\[pass\]\W*$", re.IGNORECASE)
-
-
-def is_pass(response: str) -> bool:
-    return PASS_RE.match(strip_private_reasoning(response)) is not None
+# PASS_SENTINEL is offered to the model on ambient/utility triggers so
+# unprompted speech is an option, not an obligation. Real regulars ignore most
+# of what scrolls past; forcing a line every trigger is what produces
+# spectator commentary.
+__all__ = ["Module", "PASS_SENTINEL", "is_pass"]
 
 
 class Module:

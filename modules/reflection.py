@@ -74,7 +74,7 @@ class Module:
             ),
         }
         try:
-            profile = ctx.bottle.llm.model_copy(update={
+            profile = ctx.bottle.llm_for("reflection").model_copy(update={
                 "temperature": settings.temperature,
                 "max_tokens": settings.max_tokens,
                 "frequency_penalty": 0.0,

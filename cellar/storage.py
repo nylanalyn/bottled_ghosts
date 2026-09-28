@@ -7,6 +7,7 @@ import aiosqlite
 
 from cellar.migrations import migrate
 from cellar.models import (
+    LLM_TASKS,
     Bottle,
     BottleSummary,
     IRCMessage,
@@ -33,7 +34,9 @@ async def load_bottle(db: aiosqlite.Connection, bottle_id: int) -> Bottle:
                   l.endpoint, l.model, l.api_key, l.temperature, l.max_tokens,
                   l.frequency_penalty, l.presence_penalty,
                   COALESCE((SELECT json_group_array(a.alias)
-                            FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases
+                            FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases,
+                  COALESCE((SELECT json_group_object(t.task, t.model)
+                            FROM bot_task_models t WHERE t.bot_id = b.id), '{}') AS task_models
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
            JOIN llm_profiles l ON l.id = b.llm_profile_id
            WHERE b.id = ? AND b.enabled = 1""",
@@ -55,6 +58,7 @@ def _bottle_from_row(row: aiosqlite.Row) -> Bottle:
         recollections_enabled=bool(row["recollections_enabled"]),
         timezone=row["timezone"],
         aliases=json.loads(row["aliases"]),
+        task_models=json.loads(row["task_models"]),
         irc=IRCProfile(network=row["network"], host=row["host"], port=row["port"],
             tls=bool(row["tls"]), nick=row["nick"], username=row["username"],
             realname=row["realname"], channels=json.loads(row["channels"]),
@@ -95,7 +99,9 @@ async def load_enabled_bottles(db: aiosqlite.Connection) -> list[Bottle]:
                   l.endpoint, l.model, l.api_key, l.temperature, l.max_tokens,
                   l.frequency_penalty, l.presence_penalty,
                   COALESCE((SELECT json_group_array(a.alias)
-                            FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases
+                            FROM bot_aliases a WHERE a.bot_id = b.id), '[]') AS aliases,
+                  COALESCE((SELECT json_group_object(t.task, t.model)
+                            FROM bot_task_models t WHERE t.bot_id = b.id), '{}') AS task_models
            FROM bots b JOIN irc_profiles i ON i.id = b.irc_profile_id
            JOIN llm_profiles l ON l.id = b.llm_profile_id
            WHERE b.enabled = 1 ORDER BY b.id"""
@@ -284,6 +290,60 @@ async def _update_secret(
         await db.execute(
             """INSERT INTO configuration_events(bot_id, actor, changed_fields)
                VALUES (?, ?, ?)""", (bottle_id, actor, changed_field),
+        )
+        await db.commit()
+        return True
+    except Exception:
+        await db.rollback()
+        raise
+
+
+async def set_task_model(
+    db: aiosqlite.Connection, *, bottle_id: int, task: str, model: str | None,
+    actor: str = "operator",
+) -> bool:
+    """Set or clear (``model=None``) one task's model override, audited."""
+    actor = actor.strip()
+    if not actor:
+        raise ValueError("configuration actor cannot be empty")
+    if task not in LLM_TASKS:
+        raise ValueError(f"task must be one of: {', '.join(LLM_TASKS)}")
+    if model is not None:
+        model = model.strip()
+        if not model or any(character.isspace() for character in model):
+            raise ValueError("model must be a non-empty name without spaces")
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        if await (await db.execute(
+            "SELECT 1 FROM bots WHERE id = ?", (bottle_id,),
+        )).fetchone() is None:
+            raise LookupError(f"Bottle {bottle_id} does not exist")
+        row = await (await db.execute(
+            "SELECT model FROM bot_task_models WHERE bot_id = ? AND task = ?",
+            (bottle_id, task),
+        )).fetchone()
+        old = None if row is None else str(row["model"])
+        if old == model:
+            await db.commit()
+            return False
+        if model is None:
+            await db.execute(
+                "DELETE FROM bot_task_models WHERE bot_id = ? AND task = ?",
+                (bottle_id, task),
+            )
+        else:
+            await db.execute(
+                """INSERT INTO bot_task_models(bot_id, task, model, updated_at)
+                   VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(bot_id, task) DO UPDATE SET
+                       model = excluded.model, updated_at = CURRENT_TIMESTAMP""",
+                (bottle_id, task, model),
+            )
+        await db.execute(
+            """INSERT INTO configuration_events(
+                   bot_id, actor, changed_fields, old_value, new_value
+               ) VALUES (?, ?, ?, ?, ?)""",
+            (bottle_id, actor, f"task_model:{task}", json.dumps(old), json.dumps(model)),
         )
         await db.commit()
         return True

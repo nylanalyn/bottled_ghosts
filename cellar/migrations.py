@@ -1158,6 +1158,22 @@ async def migration_040(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_041(db: aiosqlite.Connection) -> None:
+    """Let each kind of LLM call use its own model per Bottle."""
+    await db.execute(
+        """CREATE TABLE bot_task_models (
+               bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+               task TEXT NOT NULL CHECK (task IN (
+                   'reply', 'initiative', 'reflection', 'extraction', 'recollection',
+                   'dream', 'followup', 'summary', 'consolidation'
+               )),
+               model TEXT NOT NULL CHECK (length(trim(model)) > 0),
+               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               PRIMARY KEY (bot_id, task)
+           )"""
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -1187,6 +1203,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_038,
     migration_039,
     migration_040,
+    migration_041,
 )
 
 

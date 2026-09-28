@@ -192,6 +192,10 @@ Stores the optional initiative module's per-channel cadence. Columns: `bot_id IN
 
 Append-style record of every quiet-room opening offered to a Bottle. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `quiet_minutes INTEGER NOT NULL` (CHECK nonnegative; how long the room had been quiet), `outcome TEXT NOT NULL DEFAULT 'offered'` (CHECK `offered`, `spoke`, or `passed`; updated once after generation), `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `initiative_events_scope_idx(bot_id, network, channel, created_at DESC)`. Offers in the last 24 hours count toward the module's `max_per_day` cap whether or not the model spoke.
 
+## bot_task_models
+
+Stores per-Bottle model overrides for individual kinds of LLM call. Columns: `bot_id INTEGER NOT NULL`, `task TEXT NOT NULL` (CHECK one of `reply`, `initiative`, `reflection`, `extraction`, `recollection`, `dream`, `followup`, `summary`, `consolidation`), `model TEXT NOT NULL` (CHECK non-blank), `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, task)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Only the model name is overridden; the endpoint, API key, and each task's own temperature and token budget are unchanged. A task without a row uses the Bottle's `llm_profiles.model`, except `initiative`, which first falls back to a `reply` override. Changes append `task_model:<task>` rows to `configuration_events`.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -234,3 +238,4 @@ Append-style record of every quiet-room opening offered to a Bottle. Columns: `i
 - 038: Rebuild `mood_state` so `last_event` also accepts `tone` for mood changes caused by rated exchange tone.
 - 039: Add automatic, FTS-searchable self-memories extracted from public recollection chunks.
 - 040: Add quiet-room initiative cadence state and an inspectable log of every opening offer and its outcome.
+- 041: Add per-Bottle, per-task LLM model overrides.

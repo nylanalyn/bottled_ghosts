@@ -54,7 +54,7 @@ async def run_dream(
         },
         {"role": "user", "content": transcript},
     ]
-    profile = bottle.llm.model_copy(update={
+    profile = bottle.llm_for("dream").model_copy(update={
         "temperature": 0.3, "max_tokens": 3072,
         # dreams summarize; they should not avoid recurring topics the way chat does
         "frequency_penalty": 0.0, "presence_penalty": 0.0,

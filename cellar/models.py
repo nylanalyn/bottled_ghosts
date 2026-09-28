@@ -111,6 +111,16 @@ class LLMProfile(BaseModel):
     presence_penalty: float = Field(default=0.0, ge=-2.0, le=2.0)
 
 
+# Kinds of LLM call that may use a model other than the Bottle's main one.
+# Each task keeps its own temperature and token budget; only the model name
+# changes. "initiative" falls back to "reply" before the main model.
+LLM_TASKS = (
+    "reply", "initiative", "reflection", "extraction", "recollection",
+    "dream", "followup", "summary", "consolidation",
+)
+LLM_TASK_FALLBACKS = {"initiative": "reply"}
+
+
 class Bottle(BaseModel):
     id: int
     name: str
@@ -125,6 +135,18 @@ class Bottle(BaseModel):
     recollections_enabled: bool = False
     timezone: str = "UTC"
     aliases: list[str] = Field(default_factory=list)
+    task_models: dict[str, str] = Field(default_factory=dict)
+
+    def llm_for(self, task: str) -> LLMProfile:
+        """The LLM profile for one kind of call, honoring per-task overrides."""
+        if task not in LLM_TASKS:
+            raise ValueError(f"unknown LLM task: {task}")
+        current: str | None = task
+        while current is not None:
+            if current in self.task_models:
+                return self.llm.model_copy(update={"model": self.task_models[current]})
+            current = LLM_TASK_FALLBACKS.get(current)
+        return self.llm
 
     @model_validator(mode="after")
     def validate_timezone(self) -> "Bottle":

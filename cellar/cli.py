@@ -13,6 +13,7 @@ from cellar.dream_store import list_dreams
 from cellar.dreams import run_dream, run_sleeping_dream
 from cellar.ignore_store import add_ignore_rule, delete_ignore_rule, list_ignore_rules
 from cellar.runtime import run_bottle, run_bottles
+from cellar.models import LLM_TASKS
 from cellar.self_memory import archive_self_memory, list_self_memories
 from cellar.recollections import (
     archive_recollection, list_recollections, recollect, recollection_sources,
@@ -55,6 +56,7 @@ from cellar.storage import (
     set_llm_api_key,
     set_memory_extraction,
     set_recollections_enabled,
+    set_task_model,
     set_sasl_credentials,
     set_quit_message,
     set_server_password,
@@ -223,6 +225,25 @@ async def async_main(args: argparse.Namespace) -> None:
         elif args.command == "recollection-archive":
             await archive_recollection(db, recollection_id=args.id, actor=args.actor)
             print(f"Archived recollection {args.id}")
+        elif args.command == "task-model":
+            if args.clear == (args.model is not None):
+                raise ValueError("give a MODEL to set, or --clear to remove the override")
+            changed = await set_task_model(
+                db, bottle_id=args.bottle_id, task=args.task,
+                model=None if args.clear else args.model, actor=args.actor,
+            )
+            state = "cleared" if args.clear else f"set to {args.model}"
+            print(f"Bottle {args.bottle_id} {args.task} model {state}"
+                  if changed else "No change")
+        elif args.command == "task-models":
+            task_bottle = await load_bottle(db, args.bottle_id)
+            for task in LLM_TASKS:
+                origin = (
+                    "override" if task in task_bottle.task_models
+                    else "fallback" if task_bottle.llm_for(task).model != task_bottle.llm.model
+                    else "main"
+                )
+                print(f"{task}\t{task_bottle.llm_for(task).model}\t{origin}")
         elif args.command == "self-memories":
             for item in await list_self_memories(
                 db, bot_id=args.bottle_id, include_archived=args.archived,
@@ -338,7 +359,7 @@ async def async_main(args: argparse.Namespace) -> None:
         elif args.command == "memory-consolidate-scan":
             scan_bottle = await load_bottle(db, args.bottle_id)
             created = await scan_consolidation_proposals(
-                db, profile=scan_bottle.llm, bot_id=args.bottle_id,
+                db, profile=scan_bottle.llm_for("consolidation"), bot_id=args.bottle_id,
                 user_id=args.user_id, actor=args.actor,
             )
             print(f"Created {created} consolidation proposal(s)")
@@ -546,6 +567,18 @@ def main() -> None:
     )
     recollection_archive_parser.add_argument("id", type=int)
     recollection_archive_parser.add_argument("--actor", default="operator")
+    task_model_parser = commands.add_parser(
+        "task-model", help="use a different model for one kind of LLM call"
+    )
+    task_model_parser.add_argument("bottle_id", type=int)
+    task_model_parser.add_argument("task", choices=LLM_TASKS)
+    task_model_parser.add_argument("model", nargs="?")
+    task_model_parser.add_argument("--clear", action="store_true")
+    task_model_parser.add_argument("--actor", default="operator")
+    task_models_parser = commands.add_parser(
+        "task-models", help="show which model each kind of LLM call uses"
+    )
+    task_models_parser.add_argument("bottle_id", type=int)
     self_memories_parser = commands.add_parser(
         "self-memories", help="list what a Bottle has said about itself"
     )

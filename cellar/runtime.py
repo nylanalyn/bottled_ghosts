@@ -303,7 +303,7 @@ async def run_bottle_once(
         )
         await modules.before_generation(module_context)
         module_context.response, _ = split_tone(
-            await complete(bottle.llm, module_context.generation_prompt), (),
+            await complete(bottle.llm_for("initiative"), module_context.generation_prompt), (),
         )
         async with database_lock:
             await modules.after_response(module_context)
@@ -415,7 +415,8 @@ async def run_bottle_once(
         module_context.generation_prompt = prompt
         await modules.before_generation(module_context)
         response, nick_tones = split_tone(
-            await complete(bottle.llm, module_context.generation_prompt), rated_speakers,
+            await complete(bottle.llm_for("reply"), module_context.generation_prompt),
+            rated_speakers,
         )
         if module_context.request_tone:
             user_by_nick = {irc_casefold(item.message.nick): item.user_id for item in items}
@@ -475,7 +476,8 @@ async def run_bottle_once(
                             item.message.body for item in group_items
                         )
                     candidates = await extract_candidates(
-                        bottle.llm, speaker=source_items[-1].message.nick,
+                        bottle.llm_for("extraction"),
+                        speaker=source_items[-1].message.nick,
                         body=extraction_body,
                         bot_names=(active_nick(), *bottle.address_names),
                     )

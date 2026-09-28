@@ -190,7 +190,7 @@ async def _summarize(
             "--- end quoted IRC message ---"
         )},
     ]
-    profile = bottle.llm.model_copy(update={
+    profile = bottle.llm_for("recollection").model_copy(update={
         "temperature": 0.0, "max_tokens": 1024,
         "frequency_penalty": 0.0, "presence_penalty": 0.0,
     })

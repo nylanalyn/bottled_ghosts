@@ -334,6 +334,24 @@ bottled-ghosts module-toggle 1 initiative on --actor aureate
 Every offer and whether the Bottle spoke or passed is recorded in the
 `initiative_events` table. See ADR-022.
 
+Each kind of LLM call can use its own model while keeping the Bottle's
+endpoint, API key, and that call's own temperature and token budget. Tasks are
+`reply`, `initiative` (falls back to `reply`), `reflection`, `extraction`,
+`recollection`, `dream`, `followup`, `summary`, and `consolidation`; anything
+unset uses the Bottle's main model. Use the model names your OpenAI-compatible
+endpoint (for example LiteLLM) exposes:
+
+```bash
+bottled-ghosts task-model 1 recollection deepseek-v4-flash --actor aureate
+bottled-ghosts task-model 1 dream glm-5.3 --actor aureate
+bottled-ghosts task-model 1 dream --clear --actor aureate
+bottled-ghosts task-models 1
+```
+
+Background jobs pick up changes on their next run; restart a Bottle for reply,
+reflection, and initiative changes. The admin `status` and `model` commands
+list any overrides. See ADR-023.
+
 Dreaming is an explicit job rather than a hidden background scheduler:
 
 ```bash

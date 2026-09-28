@@ -189,7 +189,7 @@ class Module:
     async def nightly(self, ctx: NightlyContext) -> None:
         settings = _settings(ctx)
         try:
-            text = await extract_followup(ctx.bottle.llm, ctx.summary)
+            text = await extract_followup(ctx.bottle.llm_for("followup"), ctx.summary)
         except Exception:
             logger.exception(
                 "follow-up extraction failed for Bottle %d; skipping",

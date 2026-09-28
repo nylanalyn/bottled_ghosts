@@ -35,6 +35,14 @@ def _active_module_names(
     )
 
 
+def _model_line(ctx: RuntimeContext) -> str:
+    """Main model plus any per-task overrides, e.g. ``x (dream: y)``."""
+    overrides = ", ".join(
+        f"{task}: {model}" for task, model in sorted(ctx.bottle.task_models.items())
+    )
+    return f"{ctx.bottle.llm.model} ({overrides})" if overrides else ctx.bottle.llm.model
+
+
 class Module:
     def __init__(self) -> None:
         self._runner: web.AppRunner | None = None
@@ -159,7 +167,7 @@ class Module:
                 messages = [
                     "admin: connected\n"
                     f"irc: {'connected' if ctx.state.irc_connected else 'disconnected'}\n"
-                    f"model: {ctx.bottle.llm.model}\n"
+                    f"model: {_model_line(ctx)}\n"
                     f"responding: {responding}\n"
                     f"modules: {', '.join(active_modules) if active_modules else 'none'}"
                 ]
@@ -181,7 +189,7 @@ class Module:
             elif command == "affinity":
                 messages = await self._affinity(ctx, argument)
             elif command == "model":
-                messages = [f"model: {ctx.bottle.llm.model}"]
+                messages = [f"model: {_model_line(ctx)}"]
             elif command in {"off", "on"}:
                 enabled = command == "on"
                 await set_response_enabled(
@@ -266,7 +274,7 @@ class Module:
             f"<{speaker}> {body[:450]}" for _timestamp, speaker, body in lines
         )
         try:
-            summary = await complete(ctx.bottle.llm, [
+            summary = await complete(ctx.bottle.llm_for("summary"), [
                 {"role": "system", "content": (
                     "Give a short factual Discord admin summary of this IRC room. "
                     "State the main topics, decisions, and unresolved questions. "

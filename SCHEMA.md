@@ -124,6 +124,10 @@ Append-only Bottle configuration audit history. Columns: `id INTEGER PRIMARY KEY
 
 Stores persistent operational response control separately from Bottle enablement and process liveness. Columns: `bot_id INTEGER PRIMARY KEY`, `response_enabled INTEGER NOT NULL DEFAULT 1`, `quiet INTEGER NOT NULL DEFAULT 0`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. `response_enabled` is the full on/off kill switch for public responses; `quiet` is a third state where the bottle stays online and responds to direct pings (PMs and name mentions) but suppresses ambient/automatic speech. `quiet` is only meaningful when `response_enabled = 1`; re-enabling responses clears `quiet`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
 
+## bot_presence
+
+Stores when each Bottle was last known to be connected to IRC. Columns: `bot_id INTEGER PRIMARY KEY`, `last_seen_at TEXT NOT NULL`. The runtime writes a heartbeat about once a minute while registered and once more at disconnect. On the next connection the gap since `last_seen_at` (not channel silence) decides whether a `System event: ... rejoined after being offline` line is logged, one per channel as the server confirms the JOIN. A Bottle with no row has never connected and gets no absence note. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
+
 ## bot_away_status
 
 Stores the current explicit operator-provided availability note for a Bottle. Columns: `bot_id INTEGER PRIMARY KEY`, `message TEXT NOT NULL`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. The note is injected into prompts before generation and changes are recorded in `configuration_events`.

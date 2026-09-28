@@ -195,3 +195,12 @@ async def test_ambient_chat_paces_utility_bot_events(tmp_path) -> None:
         assert private.suppress_automatic_response is False
     finally:
         await db.close()
+
+
+def test_pass_sentinel_survives_model_decoration() -> None:
+    from modules.ambient_chat import is_pass
+    for decorated in ("[pass]", "*[pass]*", "[PASS].", "  `[pass]`\n",
+                      "<think>nothing to add</think>\n[pass]"):
+        assert is_pass(decorated), decorated
+    for real in ("[pass] on that, but the build is green", "i'd pass", "pass"):
+        assert not is_pass(real), real

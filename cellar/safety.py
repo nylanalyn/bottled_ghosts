@@ -7,6 +7,18 @@ from cellar.irc import truncate_utf8
 
 THINK_RE = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
 TAG_RE = re.compile(r"</?think\b[^>]*>", re.IGNORECASE)
+URL_RE = re.compile(r"(https?://\S+)")
+# Only paired markdown emphasis is removed. Lone symbols carry meaning in IRC
+# chat (~/code, snake_case, a * footnote), so they are left alone.
+MARKDOWN_EMPHASIS_RES = (
+    re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*"),
+    re.compile(r"(?<![\w*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![\w*])"),
+    re.compile(r"(?<!\w)__(?=\S)(.+?)(?<=\S)__(?!\w)"),
+    re.compile(r"(?<!\w)_(?=[^\s_])(.+?)(?<=[^\s_])_(?!\w)"),
+    re.compile(r"~~(?=\S)(.+?)(?<=\S)~~"),
+    re.compile(r"`([^`\n]+)`"),
+)
+BULLET_RE = re.compile(r"^[*•]\s+")
 
 # Length-proportional send pacing so replies do not land instantly after the
 # listening window closes. Zero cap disables the pause; the test suite pins it
@@ -40,6 +52,17 @@ def strip_private_reasoning(text: str) -> str:
     return TAG_RE.sub("", text).strip()
 
 
+def strip_markdown_emphasis(line: str) -> str:
+    """Unwrap paired markdown emphasis outside URLs."""
+    parts = URL_RE.split(line)
+    for index in range(0, len(parts), 2):
+        part = parts[index]
+        for pattern in MARKDOWN_EMPHASIS_RES:
+            part = pattern.sub(r"\1", part)
+        parts[index] = part
+    return BULLET_RE.sub("", "".join(parts))
+
+
 def sanitize(
     text: str, *, max_lines: int, max_chars: int, bot_nick: str | None = None,
 ) -> list[str]:
@@ -53,12 +76,7 @@ def sanitize(
     for raw in text.splitlines():
         if nick_prefix is not None:
             raw = nick_prefix.sub("", raw, count=1)
-        tokens = raw.strip().replace("\r", "").split()
-        line = " ".join(
-            token if token.startswith(("http://", "https://"))
-            else re.sub(r"[*_`~]", "", token)
-            for token in tokens
-        )
+        line = strip_markdown_emphasis(" ".join(raw.replace("\r", "").split()))
         if line:
             lines.append(truncate_utf8(line[:max_chars], max_chars))
         if len(lines) == max_lines:

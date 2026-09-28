@@ -43,10 +43,28 @@ async def test_reflection_appends_private_notes_to_final_prompt(tmp_path, monkey
 
     assert len(calls) == 1
     assert "private reflection pass" in calls[0][1][0]["content"]
+    assert "what aria knows" in calls[0][1][0]["content"]
     assert "The telescope callback matters" not in calls[0][1][0]["content"]
     assert "The telescope callback matters" in ctx.generation_prompt[0]["content"]
     assert calls[0][0].max_tokens == 160
     assert calls[0][0].temperature == 0.2
+
+
+@pytest.mark.asyncio
+async def test_reflection_names_the_bottle_it_runs_for(tmp_path, monkeypatch) -> None:
+    ctx = _context(tmp_path)
+    ctx.bottle = ctx.bottle.model_copy(update={"name": "frauderick"})
+    calls = []
+
+    async def fake_complete(profile, messages):
+        calls.append(messages)
+        return "notes"
+
+    monkeypatch.setattr("modules.reflection.complete", fake_complete)
+    await Module().before_generation(ctx)
+
+    assert "what frauderick knows" in calls[0][0]["content"]
+    assert "Aria" not in calls[0][0]["content"]
 
 
 @pytest.mark.asyncio

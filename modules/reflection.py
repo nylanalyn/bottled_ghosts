@@ -43,11 +43,11 @@ def _settings(ctx: ModuleContext) -> Settings:
     )
 
 
-def _reflection_instruction() -> str:
+def _reflection_instruction(name: str) -> str:
     return (
         "This is a private reflection pass before an IRC reply. Do not write the reply "
         "and do not address the room. Return concise plain-text working notes only: "
-        "what is happening, which supplied context is relevant, what Aria knows or "
+        f"what is happening, which supplied context is relevant, what {name} knows or "
         "is unsure about, and the most natural useful angle or choice to make. "
         "Notice if silence would be better. Do not invent memories, claim hidden "
         "knowledge, or mention this reflection task. Keep the notes under 120 words."
@@ -70,7 +70,7 @@ class Module:
             **reflection_prompt[0],
             "content": (
                 f"{reflection_prompt[0].get('content', '')}\n\n"
-                f"{_reflection_instruction()}"
+                f"{_reflection_instruction(ctx.bottle.name)}"
             ),
         }
         try:

@@ -816,47 +816,95 @@ def test_absence_gap_text_reads_like_a_person() -> None:
     assert absence_gap_text(3000) == "2 days"
 
 
-@pytest.mark.asyncio
-async def test_absence_note_logged_only_for_long_gaps(tmp_path) -> None:
-    from cellar.runtime import log_absence_notes
-    database = tmp_path / "absence.db"
+async def _run_absence_session(monkeypatch, tmp_path, *, presence_offset: str | None):
+    """Connect once through a fake client that joins #gone and #quiet.
+
+    ``presence_offset`` seeds the last connected heartbeat (an SQLite datetime
+    modifier) or leaves the Bottle never-connected when None. #quiet has had no
+    messages for a day, which must not count as the Bottle being away.
+    """
+    from cellar.irc import IRCJoinEvent
     soul = tmp_path / "soul.md"
     soul.write_text("Be concise.", encoding="utf-8")
-    db = await open_database(database)
-    try:
-        bottle_id = await create_bottle(
-            db, name="test", soul_prompt_path=soul,
-            irc=IRCProfile(network="test", host="localhost", nick="ghost",
-                           username="ghost", realname="Ghost",
-                           channels=["#gone", "#recent"]),
-            llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
-        )
-        bottle = await load_bottle(db, bottle_id)
+    db = await open_database(tmp_path / "absence.db")
+    bottle_id = await create_bottle(
+        db, name="test", soul_prompt_path=soul,
+        irc=IRCProfile(network="test", host="localhost", nick="ghost",
+                       username="ghost", realname="Ghost",
+                       channels=["#gone", "#quiet"]),
+        llm=LLMProfile(endpoint="http://localhost/chat", model="test"),
+    )
+    await db.execute(
+        """INSERT INTO messages(network, channel, speaker, body, bot_id, timestamp)
+           VALUES ('test', '#quiet', 'carol', 'long ago', ?, datetime('now', '-1 day'))""",
+        (bottle_id,),
+    )
+    if presence_offset is not None:
         await db.execute(
-            """INSERT INTO messages(network, channel, speaker, body, bot_id, timestamp)
-               VALUES ('test', '#gone', 'carol', 'before the outage', ?,
-                       datetime('now', '-3 hours'))""",
-            (bottle_id,),
+            "INSERT INTO bot_presence(bot_id, last_seen_at) VALUES (?, datetime('now', ?))",
+            (bottle_id, presence_offset),
         )
-        await db.execute(
-            """INSERT INTO messages(network, channel, speaker, body, bot_id, timestamp)
-               VALUES ('test', '#recent', 'carol', 'just now', ?,
-                       datetime('now'))""",
-            (bottle_id,),
-        )
-        await db.commit()
-        await log_absence_notes(
-            db, bottle=bottle, network="test", channels=["#gone", "#recent"],
-            nick="ghost", database_lock=asyncio.Lock(),
-        )
-        rows = list(await (await db.execute(
-            "SELECT channel, body FROM messages WHERE speaker = 'IRC runtime'"
-        )).fetchall())
-        assert [(row["channel"], row["body"]) for row in rows] == [
-            ("#gone", "System event: ghost rejoined after being offline for about 3 hours."),
-        ]
-    finally:
-        await db.close()
+    await db.commit()
+
+    class FakeIRCClient:
+        def __init__(self, _profile, handler) -> None:
+            self.handler = handler
+            self.current_nick = "ghost"
+            self.join_handler = None
+            self.connection_state_handler = None
+            self.join_channels: list[str] = []
+
+        async def run(self) -> None:
+            self.connection_state_handler(True)
+            for channel in self.join_channels:
+                await self.join_handler(IRCJoinEvent(channel=channel))
+            # A duplicate JOIN confirmation must not duplicate the note.
+            await self.join_handler(IRCJoinEvent(channel="#gone"))
+            await asyncio.sleep(0.01)
+            self.connection_state_handler(False)
+
+    monkeypatch.setattr("cellar.runtime.IRCClient", FakeIRCClient)
+    await run_bottle_once(db, await load_bottle(db, bottle_id), ModuleRunner([]))
+    rows = list(await (await db.execute(
+        "SELECT channel, body FROM messages WHERE speaker = 'IRC runtime' ORDER BY id"
+    )).fetchall())
+    presence = await (await db.execute(
+        """SELECT (julianday('now') - julianday(last_seen_at)) * 86400
+           FROM bot_presence WHERE bot_id = ?""", (bottle_id,),
+    )).fetchone()
+    await db.close()
+    return [(row["channel"], row["body"]) for row in rows], presence
+
+
+@pytest.mark.asyncio
+async def test_absence_note_uses_presence_not_channel_silence(monkeypatch, tmp_path) -> None:
+    notes, presence = await _run_absence_session(
+        monkeypatch, tmp_path, presence_offset="-3 hours",
+    )
+    assert notes == [
+        ("#gone", "System event: ghost rejoined after being offline for about 3 hours."),
+        ("#quiet", "System event: ghost rejoined after being offline for about 3 hours."),
+    ]
+    assert presence is not None and presence[0] < 5
+
+
+@pytest.mark.asyncio
+async def test_quiet_channel_after_short_reconnect_is_not_an_absence(
+    monkeypatch, tmp_path,
+) -> None:
+    notes, _presence = await _run_absence_session(
+        monkeypatch, tmp_path, presence_offset="-2 minutes",
+    )
+    assert notes == []
+
+
+@pytest.mark.asyncio
+async def test_first_ever_connection_logs_no_absence(monkeypatch, tmp_path) -> None:
+    notes, presence = await _run_absence_session(
+        monkeypatch, tmp_path, presence_offset=None,
+    )
+    assert notes == []
+    assert presence is not None
 
 
 @pytest.mark.asyncio

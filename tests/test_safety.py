@@ -61,3 +61,17 @@ def test_typing_pace_scales_with_length_and_caps(monkeypatch) -> None:
     long = safety.typing_seconds("word " * 100)
     assert 0.0 < short < long
     assert long == 3.0
+
+
+def test_sanitize_unwraps_paired_emphasis_but_keeps_meaningful_symbols() -> None:
+    def clean(text: str) -> str:
+        return sanitize(text, max_lines=1, max_chars=200)[0]
+
+    assert clean("**bold** and *soft* and __under__ and `code` and ~~gone~~") == (
+        "bold and soft and under and code and gone"
+    )
+    assert clean("cd ~/code/bottled_ghosts and run snake_case_name") == (
+        "cd ~/code/bottled_ghosts and run snake_case_name"
+    )
+    assert clean("2 * 3 * 4 is 24, *sigh") == "2 * 3 * 4 is 24, *sigh"
+    assert clean("* first point") == "first point"

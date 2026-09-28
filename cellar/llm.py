@@ -23,11 +23,18 @@ async def complete(
         payload["presence_penalty"] = profile.presence_penalty
     async with httpx.AsyncClient(timeout=60) as client:
         for attempt in range(3):
-            response = await client.post(profile.endpoint, headers=headers, json=payload)
-            if response.status_code != 429 and response.status_code < 500:
-                break
-            if attempt == 2:
-                break
+            try:
+                response = await client.post(profile.endpoint, headers=headers, json=payload)
+            except httpx.TransportError:
+                # Connection resets and timeouts are as transient as a 503;
+                # the final attempt lets the error propagate to the caller.
+                if attempt == 2:
+                    raise
+            else:
+                if response.status_code != 429 and response.status_code < 500:
+                    break
+                if attempt == 2:
+                    break
             await asyncio.sleep((2 ** attempt) + random.uniform(0, 0.25))
         response.raise_for_status()
         data = response.json()

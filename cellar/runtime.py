@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 MOOD_BREAK_SECONDS = 30 * 60
 MOOD_BREAK_FALLBACK = "I'm too annoyed to be good company. I need thirty minutes to breathe."
 ABSENCE_NOTE_MIN_MINUTES = 10
+PRESENCE_HEARTBEAT_SECONDS = 60.0
 
 
 def absence_gap_text(minutes: int) -> str:
@@ -143,40 +144,53 @@ async def _finish_room_break(
     return True
 
 
-async def log_absence_notes(
-    db: aiosqlite.Connection, *, bottle: Bottle, network: str, channels: list[str],
-    nick: str, database_lock: asyncio.Lock,
+async def record_presence(db: aiosqlite.Connection, *, bottle_id: int) -> None:
+    """Heartbeat: the Bottle is connected to IRC right now."""
+    await db.execute(
+        """INSERT INTO bot_presence(bot_id, last_seen_at) VALUES (?, CURRENT_TIMESTAMP)
+           ON CONFLICT(bot_id) DO UPDATE SET last_seen_at = excluded.last_seen_at""",
+        (bottle_id,),
+    )
+    await db.commit()
+
+
+async def offline_minutes(db: aiosqlite.Connection, *, bottle_id: int) -> int | None:
+    """Minutes since the last connected heartbeat, or None if never connected.
+
+    Channel silence is not absence: a quiet room overnight says nothing about
+    whether the Bottle was there, so only the presence heartbeat counts.
+    """
+    row = await (await db.execute(
+        """SELECT CAST((julianday('now') - julianday(last_seen_at)) * 1440 AS INTEGER)
+           FROM bot_presence WHERE bot_id = ?""",
+        (bottle_id,),
+    )).fetchone()
+    return None if row is None or row[0] is None else max(0, int(row[0]))
+
+
+async def log_absence_note(
+    db: aiosqlite.Connection, *, bottle: Bottle, network: str, channel: str,
+    nick: str, minutes: int,
 ) -> None:
-    """Record each channel's offline gap so the Bottle knows it was away.
+    """Record one channel's offline gap so the Bottle knows it was away.
 
     Mirrors the kick and mood-break system events: the runtime writes an
     inspectable line into the channel history, and the character decides
     whether and how to mention coming back.
     """
-    for channel in channels:
-        row = await (await db.execute(
-            """SELECT CAST((julianday('now') - julianday(MAX(timestamp))) * 1440
-                      AS INTEGER)
-               FROM messages WHERE bot_id = ? AND network = ? AND channel = ?""",
-            (bottle.id, network, channel),
-        )).fetchone()
-        minutes = int(row[0]) if row is not None and row[0] is not None else 0
-        if minutes < ABSENCE_NOTE_MIN_MINUTES:
-            continue
-        async with database_lock:
-            await log_message(
-                db, IRCMessage(
-                    network=network, channel=channel,
-                    speaker="IRC runtime",
-                    body=(f"System event: {nick} rejoined after being "
-                          f"offline for about {absence_gap_text(minutes)}."),
-                    bot_id=bottle.id,
-                ),
-            )
-        logger.info(
-            "Bottle %d (%s) noted a %d minute absence in %s",
-            bottle.id, bottle.name, minutes, channel,
-        )
+    await log_message(
+        db, IRCMessage(
+            network=network, channel=channel,
+            speaker="IRC runtime",
+            body=(f"System event: {nick} rejoined after being "
+                  f"offline for about {absence_gap_text(minutes)}."),
+            bot_id=bottle.id,
+        ),
+    )
+    logger.info(
+        "Bottle %d (%s) noted a %d minute absence in %s",
+        bottle.id, bottle.name, minutes, channel,
+    )
 
 
 @dataclass(frozen=True)
@@ -560,13 +574,20 @@ async def run_bottle_once(
             )
 
     async def on_join(event: IRCJoinEvent) -> None:
-        """Re-part if a bouncer or server autojoins an active break channel."""
+        """Note a real absence on confirmed JOIN; re-part active break channels."""
         async with database_lock:
             rows = await _active_room_breaks(
                 db, bottle_id=bottle.id, network=bottle.irc.network,
             )
             if not any(irc_casefold(str(row["channel"])) == irc_casefold(event.channel)
                        for row in rows):
+                folded = irc_casefold(event.channel)
+                if absence is not None and folded in absence_pending_channels:
+                    absence_pending_channels.discard(folded)
+                    await log_absence_note(
+                        db, bottle=bottle, network=bottle.irc.network,
+                        channel=event.channel, nick=active_nick(), minutes=absence,
+                    )
                 return
             await log_message(
                 db,
@@ -600,11 +621,32 @@ async def run_bottle_once(
         channel for channel in bottle.irc.channels
         if irc_casefold(channel) not in stepping_away_channels
     ]
-    await log_absence_notes(
-        db, bottle=bottle, network=bottle.irc.network,
-        channels=client.join_channels, nick=active_nick(),
-        database_lock=database_lock,
-    )
+    # Measured once, before this connection's heartbeat starts. Notes are
+    # written only when the server confirms each JOIN, so a failed connection
+    # attempt logs nothing and the next attempt sees the full gap.
+    async with database_lock:
+        gap = await offline_minutes(db, bottle_id=bottle.id)
+    absence = gap if gap is not None and gap >= ABSENCE_NOTE_MIN_MINUTES else None
+    absence_pending_channels = {irc_casefold(channel) for channel in client.join_channels}
+    connected = asyncio.Event()
+    ever_connected = False
+
+    async def presence_heartbeat() -> None:
+        while True:
+            await connected.wait()
+            async with database_lock:
+                await record_presence(db, bottle_id=bottle.id)
+            await asyncio.sleep(PRESENCE_HEARTBEAT_SECONDS)
+
+    def on_connection_state(is_connected: bool) -> None:
+        nonlocal ever_connected
+        if is_connected:
+            ever_connected = True
+            connected.set()
+        else:
+            connected.clear()
+        if runtime_state is not None:
+            runtime_state.irc_connected = is_connected
 
     async def return_from_break(channel: str, rejoin_at: int) -> None:
         await asyncio.sleep(max(0.0, rejoin_at - time.time()))
@@ -625,13 +667,23 @@ async def run_bottle_once(
         task.add_done_callback(room_break_tasks.discard)
     client.kick_handler = on_kick
     client.join_handler = on_join
-    if runtime_state is not None:
-        client.connection_state_handler = lambda connected: setattr(
-            runtime_state, "irc_connected", connected
-        )
+    client.connection_state_handler = on_connection_state
+    heartbeat = asyncio.create_task(
+        presence_heartbeat(), name=f"presence-{bottle.id}",
+    )
     try:
         await client.run()
     finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
+        if ever_connected:
+            # Close out presence at the disconnect itself rather than at the
+            # last heartbeat, so a restart measures the gap precisely.
+            try:
+                async with database_lock:
+                    await record_presence(db, bottle_id=bottle.id)
+            except Exception:
+                logger.exception("could not record final presence for Bottle %d", bottle.id)
         await windows.close()
         for task in tuple(room_break_tasks):
             task.cancel()

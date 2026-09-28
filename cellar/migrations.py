@@ -1052,6 +1052,16 @@ async def migration_036(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_037(db: aiosqlite.Connection) -> None:
+    """Record when each Bottle was last known to be connected to IRC."""
+    await db.execute(
+        """CREATE TABLE bot_presence (
+               bot_id INTEGER PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE,
+               last_seen_at TEXT NOT NULL
+           )"""
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -1077,6 +1087,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_034,
     migration_035,
     migration_036,
+    migration_037,
 )
 
 

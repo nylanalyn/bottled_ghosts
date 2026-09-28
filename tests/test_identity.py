@@ -55,6 +55,23 @@ async def test_unverified_nick_does_not_inherit_account_identity(tmp_path) -> No
 
 
 @pytest.mark.asyncio
+async def test_shared_hostmask_does_not_merge_different_accounts(tmp_path) -> None:
+    db = await open_database(tmp_path / "shared-host.db")
+    try:
+        alice = await resolve_user(
+            db, network="testnet",
+            identity=identity("alice", account="alice", hostmask="~u@shared.host"),
+        )
+        mallory = await resolve_user(
+            db, network="testnet",
+            identity=identity("mallory", account="mallory", hostmask="~u@shared.host"),
+        )
+        assert mallory != alice
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
 async def test_explicit_uuid_merge_moves_identities(tmp_path) -> None:
     db = await open_database(tmp_path / "merge.db")
     try:

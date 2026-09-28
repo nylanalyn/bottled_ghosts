@@ -40,3 +40,22 @@ async def test_windows_are_isolated_and_close_cancels_pending_work() -> None:
     await manager.close()
     await asyncio.sleep(0.02)
     assert ("carol",) not in fired
+
+
+@pytest.mark.asyncio
+async def test_constant_chatter_cannot_hold_a_window_open_forever() -> None:
+    fired: list[tuple[str, ...]] = []
+
+    async def callback(items: tuple[str, ...]) -> None:
+        fired.append(items)
+
+    manager = ListeningWindowManager(0.05, callback, max_delay=0.12)
+    try:
+        # A new line every 0.02s would reset a plain 0.05s timer forever.
+        for index in range(10):
+            manager.add(("#test", "room"), str(index))
+            await asyncio.sleep(0.02)
+        assert fired, "window should fire once max_delay elapses"
+        assert fired[0][0] == "0"
+    finally:
+        await manager.close()

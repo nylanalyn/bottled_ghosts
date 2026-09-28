@@ -38,13 +38,16 @@ async def resolve_user_identity(
             )
             confidence = 1.0
         if row is None and identity.hostmask:
+            # Only link hostmask rows that never carried an account. A row with
+            # this sender's account would have matched above; a row with any
+            # other account belongs to someone else on a shared host or bouncer.
             row = await _first(
                 db,
                 """SELECT user_id FROM user_identities
                    WHERE network = ? AND hostmask = ? COLLATE NOCASE
-                     AND (? IS NOT NULL OR account IS NULL)
+                     AND account IS NULL
                    ORDER BY last_seen DESC LIMIT 1""",
-                (network, identity.hostmask, identity.account),
+                (network, identity.hostmask),
             )
             confidence = 0.8
         if row is None:

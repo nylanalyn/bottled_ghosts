@@ -1,8 +1,10 @@
 import logging
 import random
+import re
 
 from cellar.irc import irc_casefold, mentions_any_nick
 from cellar.module_api import ModuleContext, NightlyContext
+from cellar.safety import strip_private_reasoning
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,14 @@ DEFAULT_UTILITY_MAX_LINES = 15
 # option, not an obligation. Real regulars ignore most of what scrolls past;
 # forcing a line every trigger is what produces spectator commentary.
 PASS_SENTINEL = "[pass]"
+# Models decorate the sentinel ("*[pass]*", "[PASS].", reasoning blocks). The
+# sanitizer would strip that decoration and send a bare "[pass]" to the room,
+# so match the whole reply loosely instead of comparing it exactly.
+PASS_RE = re.compile(r"^\W*\[pass\]\W*$", re.IGNORECASE)
+
+
+def is_pass(response: str) -> bool:
+    return PASS_RE.match(strip_private_reasoning(response)) is not None
 
 
 class Module:
@@ -183,7 +193,7 @@ class Module:
         if irc_casefold(ctx.message.target) == irc_casefold(ctx.bottle.irc.nick):
             return
         if ctx.response_reason in ("ambient", "utility_event"):
-            if ctx.response is not None and ctx.response.strip().lower() == PASS_SENTINEL:
+            if ctx.response is not None and is_pass(ctx.response):
                 logger.info(
                     "%s passed on an %s trigger in %s",
                     ctx.bottle.irc.nick, ctx.response_reason, ctx.message.target,

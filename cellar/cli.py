@@ -38,6 +38,7 @@ from cellar.memory_consolidation import (
     scan_consolidation_proposals,
 )
 from cellar.module_loader import available_modules
+from modules.relationships import list_relationship_notes, update_relationship_note
 from cellar.module_store import (
     module_settings,
     module_states,
@@ -430,6 +431,27 @@ async def async_main(args: argparse.Namespace) -> None:
             )
             print(f"Updated {args.module_name} settings for Bottle {args.bottle_id}; "
                   "reconnect to apply")
+        elif args.command == "relationships":
+            notes = await list_relationship_notes(db, bottle_id=args.bottle_id)
+            for nick, note in notes:
+                print(f"{nick}\t{note}")
+            if not notes:
+                print("No relationship notes")
+        elif args.command in {"relationship-set", "relationship-remove"}:
+            changed = await update_relationship_note(
+                db, bottle_id=args.bottle_id, nick=args.nick,
+                note=args.note if args.command == "relationship-set" else None,
+                actor=args.actor,
+            )
+            states = await module_states(db, bottle_id=args.bottle_id)
+            if not changed:
+                print(f"No relationship note for {args.nick}")
+            else:
+                action = "Set" if args.command == "relationship-set" else "Removed"
+                print(f"{action} {args.nick} for Bottle {args.bottle_id}; restart it to apply")
+                if not states.get("relationships", False):
+                    print("Note: the relationships module is off for this Bottle "
+                          "(module-toggle BOT_ID relationships on)")
         elif args.command == "set-admin-token":
             token = getpass("Admin API token: ").strip()
             if not token:
@@ -706,6 +728,23 @@ def main() -> None:
     module_settings_parser.add_argument("module_name")
     module_settings_parser.add_argument("settings_json")
     module_settings_parser.add_argument("--actor", default="operator")
+    relationships_parser = commands.add_parser(
+        "relationships", help="list a Bottle's relationship notes"
+    )
+    relationships_parser.add_argument("bottle_id", type=int)
+    relationship_set = commands.add_parser(
+        "relationship-set", help="add or replace one person's relationship note"
+    )
+    relationship_set.add_argument("bottle_id", type=int)
+    relationship_set.add_argument("nick")
+    relationship_set.add_argument("note")
+    relationship_set.add_argument("--actor", default="operator")
+    relationship_remove = commands.add_parser(
+        "relationship-remove", help="remove one person's relationship note"
+    )
+    relationship_remove.add_argument("bottle_id", type=int)
+    relationship_remove.add_argument("nick")
+    relationship_remove.add_argument("--actor", default="operator")
     admin_token_parser = commands.add_parser(
         "set-admin-token", help="set the admin API bearer token through a hidden prompt"
     )

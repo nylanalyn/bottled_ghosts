@@ -15,8 +15,11 @@ never generated or changed by the model.
 
 from dataclasses import dataclass
 
+import aiosqlite
+
 from cellar.irc import irc_casefold, mentions_nick
 from cellar.module_api import ModuleContext, NightlyContext
+from cellar.module_store import module_settings, set_module_settings
 
 DEFAULT_LOOKBACK_LINES = 15
 MAX_LOOKBACK_LINES = 100
@@ -30,8 +33,7 @@ class Settings:
     lookback_lines: int
 
 
-def _settings(ctx: ModuleContext) -> Settings:
-    raw = ctx.module_settings.get("relationships", {})
+def _parse_people(raw: dict[str, object]) -> dict[str, tuple[str, str]]:
     people = raw.get("people", {})
     if not isinstance(people, dict):
         raise ValueError("relationships people must be an object of nick to note")
@@ -46,6 +48,12 @@ def _settings(ctx: ModuleContext) -> Settings:
                 f"relationships note for {nick} must be {MAX_NOTE_CHARS} characters or fewer"
             )
         parsed[irc_casefold(nick.strip())] = (nick.strip(), " ".join(note.split()))
+    return parsed
+
+
+def _settings(ctx: ModuleContext) -> Settings:
+    raw = ctx.module_settings.get("relationships", {})
+    parsed = _parse_people(raw)
     lookback = raw.get("lookback_lines", DEFAULT_LOOKBACK_LINES)
     if (
         isinstance(lookback, bool) or not isinstance(lookback, int)
@@ -109,3 +117,43 @@ class Module:
 
     async def nightly(self, _ctx: NightlyContext) -> None:
         return None
+
+
+async def list_relationship_notes(
+    db: aiosqlite.Connection, *, bottle_id: int,
+) -> list[tuple[str, str]]:
+    """``(nick, note)`` pairs in the Bottle's stored settings, sorted by nick."""
+    raw = (await module_settings(db, bottle_id=bottle_id)).get("relationships", {})
+    return sorted(_parse_people(raw).values(), key=lambda item: irc_casefold(item[0]))
+
+
+async def update_relationship_note(
+    db: aiosqlite.Connection, *, bottle_id: int, nick: str, note: str | None,
+    actor: str,
+) -> bool:
+    """Set (or with ``note=None`` remove) one person's note, keeping the rest.
+
+    Nicks match IRC-case-insensitively, so updating ``bork`` replaces a
+    stored ``Bork`` entry instead of adding a second one. Every other setting
+    and note is preserved, and the change is audited like module-settings.
+    """
+    nick = nick.strip()
+    if not nick or any(character.isspace() for character in nick):
+        raise ValueError("nick must be a single word")
+    raw = dict((await module_settings(db, bottle_id=bottle_id)).get("relationships", {}))
+    people = raw.get("people", {})
+    if not isinstance(people, dict):
+        raise ValueError("stored relationships people is not an object; fix it with module-settings")
+    folded = irc_casefold(nick)
+    kept = {key: value for key, value in people.items() if irc_casefold(str(key)) != folded}
+    if note is None:
+        if len(kept) == len(people):
+            return False
+        raw["people"] = kept
+    else:
+        raw["people"] = {**kept, nick: " ".join(note.split())}
+    _parse_people(raw)  # same validation the running module applies
+    await set_module_settings(
+        db, bottle_id=bottle_id, module_name="relationships", settings=raw, actor=actor,
+    )
+    return True

@@ -90,3 +90,69 @@ def test_settings_are_validated() -> None:
 
 def test_module_is_registered() -> None:
     assert "relationships" in available_modules()
+
+
+@pytest.mark.asyncio
+async def test_set_and_remove_one_note_keeps_the_rest(tmp_path, capsys) -> None:
+    import argparse
+
+    from cellar.cli import async_main
+    from cellar.module_store import module_settings, set_module_settings
+    from modules.relationships import list_relationship_notes, update_relationship_note
+
+    database = tmp_path / "notes.db"
+    db = await open_database(database)
+    try:
+        bottle = await _setup(db, tmp_path)
+        await set_module_settings(
+            db, bottle_id=bottle.id, module_name="relationships",
+            settings={"people": {"Bork": "the pug", "aria": "you"}, "lookback_lines": 20},
+            actor="tester",
+        )
+        # Case-insensitive: replaces "Bork" rather than adding "bork" beside it.
+        assert await update_relationship_note(
+            db, bottle_id=bottle.id, nick="bork", note="  the  best pug ", actor="tester",
+        )
+        assert await update_relationship_note(
+            db, bottle_id=bottle.id, nick="styx", note="a regular", actor="tester",
+        )
+        assert await list_relationship_notes(db, bottle_id=bottle.id) == [
+            ("aria", "you"), ("bork", "the best pug"), ("styx", "a regular"),
+        ]
+        assert (await module_settings(db, bottle_id=bottle.id))["relationships"][
+            "lookback_lines"] == 20
+        assert await update_relationship_note(
+            db, bottle_id=bottle.id, nick="ARIA", note=None, actor="tester",
+        )
+        assert not await update_relationship_note(
+            db, bottle_id=bottle.id, nick="nobody", note=None, actor="tester",
+        )
+        assert [nick for nick, _ in await list_relationship_notes(db, bottle_id=bottle.id)] == [
+            "bork", "styx",
+        ]
+        with pytest.raises(ValueError, match="500"):
+            await update_relationship_note(
+                db, bottle_id=bottle.id, nick="styx", note="x" * 501, actor="tester",
+            )
+        with pytest.raises(ValueError, match="single word"):
+            await update_relationship_note(
+                db, bottle_id=bottle.id, nick="two words", note="hi", actor="tester",
+            )
+        audits = await (await db.execute(
+            """SELECT COUNT(*) FROM configuration_events
+               WHERE changed_fields = 'module:relationships:settings'"""
+        )).fetchone()
+        assert audits[0] == 4
+    finally:
+        await db.close()
+
+    base = {"database": database, "bottle_id": bottle.id, "actor": "tester"}
+    await async_main(argparse.Namespace(
+        command="relationship-set", nick="Mikoolo", note="gave you a dog", **base,
+    ))
+    await async_main(argparse.Namespace(command="relationships", **base))
+    output = capsys.readouterr().out
+    assert "Set Mikoolo for Bottle" in output
+    assert "relationships module is off" in output
+    assert "Mikoolo\tgave you a dog" in output
+    assert "styx\ta regular" in output

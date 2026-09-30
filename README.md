@@ -312,6 +312,19 @@ bottled-ghosts module-settings 1 relationships '{"people":{"frauderick":"your gr
 bottled-ghosts module-toggle 1 relationships on --actor aureate
 ```
 
+`module-settings` replaces the whole JSON, so to add, change, or remove one
+person without retyping everyone else, use:
+
+```bash
+bottled-ghosts relationships 1
+bottled-ghosts relationship-set 1 styx "a regular; you trade music recommendations" --actor aureate
+bottled-ghosts relationship-remove 1 styx --actor aureate
+```
+
+Nicks match case-insensitively, so setting `bork` replaces an existing
+`Bork` note. Changes are audited like `module-settings`; restart the Bottle
+to apply them.
+
 Optional `lookback_lines` (default 15) controls how far back "spoke
 recently" reaches. How each relationship is going day to day comes from
 affinity.

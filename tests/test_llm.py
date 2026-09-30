@@ -142,3 +142,53 @@ async def test_complete_gives_up_after_repeated_connection_errors(monkeypatch) -
     with pytest.raises(httpx.ReadTimeout):
         await complete(_profile(), [{"role": "user", "content": "hi"}])
     assert attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_empty_reasoning_truncation_retries_once_with_headroom(monkeypatch) -> None:
+    budgets: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        budget = json.loads(request.content)["max_tokens"]
+        budgets.append(budget)
+        if budget == 160:
+            return httpx.Response(200, json={"choices": [
+                {"message": {"content": ""}, "finish_reason": "length"},
+            ]})
+        return httpx.Response(200, json={"choices": [
+            {"message": {"content": "notes"}, "finish_reason": "stop"},
+        ]})
+
+    _patch_client(monkeypatch, handler)
+    result = await complete(_profile(max_tokens=160), [{"role": "user", "content": "hi"}])
+    assert result == "notes"
+    assert budgets == [160, 160 + llm_module.REASONING_HEADROOM_TOKENS]
+
+
+@pytest.mark.asyncio
+async def test_empty_answers_for_other_reasons_do_not_retry(monkeypatch) -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"choices": [
+            {"message": {"content": "  "}, "finish_reason": "stop"},
+        ]})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="finish_reason='stop'"):
+        await complete(_profile(), [{"role": "user", "content": "hi"}])
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_that_is_still_empty_fails_clearly(monkeypatch) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [
+            {"message": {"content": None}, "finish_reason": "length"},
+        ]})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="finish_reason='length'"):
+        await complete(_profile(), [{"role": "user", "content": "hi"}])

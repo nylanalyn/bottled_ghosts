@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 CHUNK_GAP_MINUTES = 10
 MAX_CHUNK_MESSAGES = 40
 MAX_CHUNK_CHARS = 12000
+MAX_SUMMARY_CHARS = 500
 NO_CONTINUITY_RE = re.compile(
     r"\b(?:no (?:lasting )?(?:decisions or plans|plans or decisions)|"
     r"nothing (?:significant|useful) for continuity)(?!\s+beyond\b)",
@@ -32,7 +33,9 @@ NO_CONTINUITY_RE = re.compile(
 class RecollectionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     keep: bool
-    summary: str | None = Field(default=None, max_length=500)
+    # Not length-limited here: an over-long summary is trimmed, not rejected.
+    # Rejecting it would leave the chunk unprocessed and retried forever.
+    summary: str | None = None
     self_notes: list[SelfNote] = Field(default_factory=list)
 
 
@@ -206,10 +209,23 @@ async def _summarize(
     self_notes = usable_self_notes(parsed.self_notes) if want_self_notes else []
     if not parsed.keep or parsed.summary is None:
         return None, self_notes
-    summary = parsed.summary.strip()
+    summary = fit_summary(parsed.summary)
     if not summary or NO_CONTINUITY_RE.search(summary):
         return None, self_notes
     return summary, self_notes
+
+
+def fit_summary(text: str, limit: int = MAX_SUMMARY_CHARS) -> str:
+    """Trim to the stored limit, preferring a sentence end, then a word end."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    sentence_end = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+    if sentence_end >= limit // 2:
+        return head[:sentence_end + 1]
+    word_end = head[:limit - 1].rfind(" ")
+    return (head[:word_end] if word_end > 0 else head[:limit - 1]).rstrip(" ,;:") + "…"
 
 
 async def relevant_recollections(

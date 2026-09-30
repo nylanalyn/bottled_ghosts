@@ -213,3 +213,54 @@ async def test_empty_recollection_advances_cursor(tmp_path, monkeypatch) -> None
         assert await list_recollections(db, bot_id=bottle_id) == []
     finally:
         await db.close()
+
+
+def test_long_summaries_are_trimmed_to_the_stored_limit() -> None:
+    from cellar.recollections import MAX_SUMMARY_CHARS, fit_summary
+    short = "Alice fixed the telescope."
+    assert fit_summary(f"  {short}  ") == short
+    sentences = " ".join(f"Sentence number {index} is here." for index in range(40))
+    trimmed = fit_summary(sentences)
+    assert len(trimmed) <= MAX_SUMMARY_CHARS
+    assert trimmed.endswith("here.")
+    one_run_on = "word " * 200
+    trimmed = fit_summary(one_run_on)
+    assert len(trimmed) <= MAX_SUMMARY_CHARS
+    assert trimmed.endswith("word…")
+
+
+@pytest.mark.asyncio
+async def test_over_long_model_summary_is_kept_not_retried_forever(
+    tmp_path, monkeypatch,
+) -> None:
+    db = await open_database(tmp_path / "long.db")
+    try:
+        bottle_id = await create_bottle(
+            db, name="ghost", soul_prompt_path=tmp_path / "soul.md",
+            irc=IRCProfile(network="local", host="irc.example", nick="ghost",
+                           username="ghost", realname="Ghost", channels=["#one"]),
+            llm=LLMProfile(endpoint="http://localhost", model="test"),
+        )
+        await set_recollections_enabled(db, bottle_id=bottle_id, enabled=True)
+        await db.execute("INSERT INTO users(id, canonical_name) VALUES ('alice', 'alice')")
+        message_id = await log_message(
+            db, IRCMessage(network="local", channel="#one", speaker="alice",
+                           body="The telescope is repaired", bot_id=bottle_id,
+                           user_id="alice"),
+        )
+        await db.execute(
+            "UPDATE messages SET timestamp = '2020-01-01 00:00:00' WHERE id = ?",
+            (message_id,),
+        )
+        await db.commit()
+        long_summary = "Alice repaired the telescope. " * 30
+
+        async def fake_complete(_profile, _messages) -> str:
+            return '{"keep":true,"summary":"%s"}' % long_summary
+
+        monkeypatch.setattr("cellar.recollections.complete", fake_complete)
+        assert await recollect(db, bottle=await load_bottle(db, bottle_id)) == 1
+        [row] = await list_recollections(db, bot_id=bottle_id)
+        assert 0 < len(row["summary"]) <= 500
+    finally:
+        await db.close()

@@ -12,8 +12,9 @@ offers an opening only when all of these hold:
 * a human spoke within the last ``human_recent_hours``, so nobody talks into
   a dead room. Bottles in this database, ``other_bots``, and ambient chat's
   ``utility_bot_nicks`` do not count as human;
-* a human has spoken since this Bottle's last offer in the channel, so a
-  Bottle never monologues and Bottles never chain openers off each other;
+* a human has spoken since the last offer by any Bottle in the channel, so
+  one lull gets at most one opener and Bottles never riff on each other's
+  openers in an empty room;
 * fewer than ``max_per_day`` offers in the channel in the last 24 hours.
 
 The model may decline with ``[pass]``. Every offer and its outcome is stored
@@ -168,7 +169,20 @@ class Module:
         )
         if human is None or float(human["age"]) > settings.human_recent_hours * 60:
             return
-        if last_initiative_at is not None and str(human["timestamp"]) <= last_initiative_at:
+        # Offers from every Bottle count: they share this database, and a
+        # second Bottle answering the first one's opener is still a dead room.
+        latest_offer = await (await ctx.db.execute(
+            """SELECT MAX(created_at) FROM initiative_events
+               WHERE network = ? AND channel = ? COLLATE NOCASE""",
+            (network, ctx.channel),
+        )).fetchone()
+        newest_offer = max(
+            (value for value in (
+                last_initiative_at, latest_offer[0] if latest_offer else None,
+            ) if value is not None),
+            default=None,
+        )
+        if newest_offer is not None and str(human["timestamp"]) <= newest_offer:
             return
         recent_offers = await (await ctx.db.execute(
             """SELECT COUNT(*) FROM initiative_events

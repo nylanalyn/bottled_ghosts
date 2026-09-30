@@ -64,6 +64,9 @@ async def test_offers_after_a_lull_with_a_recent_human_then_waits_for_a_human(
         await db.execute(
             "UPDATE initiative_state SET last_initiative_at = datetime('now', '-50 minutes')"
         )
+        await db.execute(
+            "UPDATE initiative_events SET created_at = datetime('now', '-50 minutes')"
+        )
         await _say(db, bottle, "alice", 40)
         after_human = _idle(db, bottle)
         await module.on_idle(after_human)
@@ -206,3 +209,25 @@ async def test_runtime_sends_an_opener_in_a_quiet_room(monkeypatch, tmp_path) ->
 
 def test_module_is_registered() -> None:
     assert "initiative" in available_modules()
+
+
+@pytest.mark.asyncio
+async def test_one_lull_gets_one_opener_across_all_bottles(tmp_path) -> None:
+    db = await open_database(tmp_path / "chain.db")
+    try:
+        ghost = await _setup(db, tmp_path)
+        other = await _setup(db, tmp_path, nick="bork")
+        await _say(db, ghost, "alice", 60)
+        await _say(db, other, "alice", 60)
+        module = Module()
+        first = _idle(db, ghost)
+        await module.on_idle(first)
+        assert first.initiative_note is not None
+
+        # Bork has never offered here, but ghost already opened this lull.
+        second = IdleContext(db=db, bottle=other, channel="#one", bot_nick="bork",
+                             module_settings=SETTINGS)
+        await module.on_idle(second)
+        assert second.initiative_note is None
+    finally:
+        await db.close()

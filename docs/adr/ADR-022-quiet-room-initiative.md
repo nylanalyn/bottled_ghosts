@@ -17,7 +17,7 @@ The `initiative` module offers an opening only when:
 
 - the room has been quiet for a randomized lull (default 45 to 180 minutes);
 - a human, not any Bottle in this database, spoke within `human_recent_hours`;
-- a human has spoken since this Bottle's previous offer in that channel;
+- a human has spoken since the previous offer by any Bottle in that channel;
 - fewer than `max_per_day` offers were made there in the last 24 hours.
 
 The model may decline with `[pass]`. `initiative_state` holds cadence and

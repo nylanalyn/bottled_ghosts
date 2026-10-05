@@ -30,3 +30,16 @@ def test_instruction_names_every_rated_speaker() -> None:
     text = tone_instruction(("alice", "bob"))
     assert "[tone: alice=neutral, bob=neutral]" in text
     assert "hostile" in text
+
+
+def test_drifted_tone_lines_are_stripped_and_parsed() -> None:
+    for line in ("/tone: ruminous=neutral", "tone: ruminous=neutral",
+                 "(tone: ruminous=neutral)", "**tone: ruminous=neutral**"):
+        assert split_tone(f"not insane, just adjacent\n{line}", ("ruminous",)) == (
+            "not insane, just adjacent", {"ruminous": "neutral"},
+        )
+
+
+def test_ordinary_lines_mentioning_tone_are_kept() -> None:
+    text = "tone: honestly it was fine\nTone: warm and fuzzy"
+    assert split_tone(text, ("carol",)) == (text, {})

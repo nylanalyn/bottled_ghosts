@@ -14,6 +14,15 @@ from cellar.irc import irc_casefold
 TONE_LABELS = ("warm", "neutral", "cold", "hostile")
 TONE_SCORES: dict[str, float] = {"warm": 1.0, "neutral": 0.0, "cold": -1.0, "hostile": -2.0}
 TONE_TAG_RE = re.compile(r"\[\s*tone\s*:\s*([^\]\n]*)\]", re.IGNORECASE)
+# Models sometimes drift from the bracketed form ("/tone: x=warm", "(tone: x=warm)",
+# "**tone: x=warm**"). Such a line is stripped only when every entry is a rating.
+TONE_LINE_RE = re.compile(
+    r"^[ \t]*[(/*_`~]*[ \t]*tone[ \t]*:[ \t]*([^\n]*?)[ \t]*[)*_`~]*[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_LABEL_ENTRY_RE = re.compile(
+    rf"^(?:[^=\s]+\s*=\s*)?(?:{'|'.join(TONE_LABELS)})\.?$", re.IGNORECASE,
+)
 
 
 def tone_instruction(speakers: tuple[str, ...]) -> str:
@@ -40,8 +49,19 @@ def split_tone(
     """
     folded_speakers = {irc_casefold(nick) for nick in speakers}
     ratings: dict[str, str] = {}
-    for match in TONE_TAG_RE.finditer(response):
-        for entry in re.split(r"[,;]", match.group(1)):
+    bodies = [match.group(1) for match in TONE_TAG_RE.finditer(response)]
+    cleaned = TONE_TAG_RE.sub("", response)
+
+    def strip_line(match: re.Match[str]) -> str:
+        entries = [entry.strip() for entry in re.split(r"[,;]", match.group(1))]
+        if not all(_LABEL_ENTRY_RE.match(entry) for entry in entries):
+            return match.group(0)
+        bodies.append(match.group(1))
+        return ""
+
+    cleaned = TONE_LINE_RE.sub(strip_line, cleaned)
+    for body in bodies:
+        for entry in re.split(r"[,;]", body):
             nick, separator, label = entry.partition("=")
             if not separator:
                 nick, label = "", nick
@@ -53,6 +73,5 @@ def split_tone(
                 folded = next(iter(folded_speakers))
             if folded in folded_speakers:
                 ratings[folded] = label
-    cleaned = TONE_TAG_RE.sub("", response)
     cleaned = "\n".join(line.rstrip() for line in cleaned.splitlines()).strip()
     return cleaned, ratings

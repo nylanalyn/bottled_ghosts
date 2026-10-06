@@ -196,6 +196,14 @@ Append-style record of every quiet-room opening offered to a Bottle. Columns: `i
 
 Stores per-Bottle model overrides for individual kinds of LLM call. Columns: `bot_id INTEGER NOT NULL`, `task TEXT NOT NULL` (CHECK one of `reply`, `initiative`, `reflection`, `extraction`, `recollection`, `dream`, `followup`, `summary`, `consolidation`), `model TEXT NOT NULL` (CHECK non-blank), `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, task)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Only the model name is overridden; the endpoint, API key, and each task's own temperature and token budget are unchanged. A task without a row uses the Bottle's `llm_profiles.model`, except `initiative`, which first falls back to a `reply` override. Changes append `task_model:<task>` rows to `configuration_events`.
 
+## hug_plans
+
+Holds at most one pending hug per Bottle and channel for the optional hugs module. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `user_id TEXT NOT NULL`, `nick TEXT NOT NULL`, `warmth REAL NOT NULL` (affinity warmth when planned), `due_at INTEGER NOT NULL` (Unix time). Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
+
+## hug_events
+
+Append-only log of hugs a Bottle gave and hug attempts it accepted or rejected. Columns: `id INTEGER PRIMARY KEY`, `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `kind TEXT NOT NULL` (`hug`, `accept`, or `reject`), `user_id TEXT` (NULL when a hugger's nick is unknown), `nick TEXT NOT NULL`, `warmth REAL`, `created_at INTEGER NOT NULL` (Unix time). Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `hug_events_scope_idx(bot_id, network, kind, user_id, created_at DESC)`.
+
 ## Migration history
 
 - 001: Add IRC profiles, LLM profiles, bottles, raw message logging, and recent-context index.
@@ -240,3 +248,4 @@ Stores per-Bottle model overrides for individual kinds of LLM call. Columns: `bo
 - 040: Add quiet-room initiative cadence state and an inspectable log of every opening offer and its outcome.
 - 041: Add per-Bottle, per-task LLM model overrides.
 - 042: Replace `fishing_state`'s cast/reel phases with `fishing_schedule`, a once-a-day `!recast` schedule with the Bottle's chosen lure, chum, or dynamite; existing lines come due about a day after their cast and bans carry over.
+- 043: Add pending hugs and a log of hugs given, accepted, and rejected for the optional hugs module.

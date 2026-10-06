@@ -125,6 +125,26 @@ async def current_warmth(
     return float(row[0]) if row is not None else 0.0
 
 
+async def decayed_warmth(
+    db: aiosqlite.Connection, *, bot_id: int, user_id: str, decay_per_hour: float,
+) -> float:
+    """The warmth score as it stands now, after silence has cooled it."""
+    row = await (await db.execute(
+        """SELECT warmth, (julianday('now') - julianday(updated_at)) * 24.0
+           FROM user_affinity WHERE bot_id = ? AND user_id = ?""",
+        (bot_id, user_id),
+    )).fetchone()
+    if row is None:
+        return 0.0
+    elapsed = max(0.0, min(_MAX_ELAPSED_HOURS, float(row[1] or 0.0)))
+    return float(row[0]) * math.exp(-decay_per_hour * elapsed)
+
+
+def decay_setting(module_settings: dict[str, dict[str, object]]) -> float:
+    """The affinity module's configured decay, for modules that read warmth."""
+    return _number(module_settings.get("affinity", {}), "decay_per_hour", 0.03, 0.0, 1.0)
+
+
 def _format_note(nick: str, warmth: float, threshold: float) -> str:
     return (
         f"Standing impression of {nick}: {warmth_label(warmth, threshold)} "

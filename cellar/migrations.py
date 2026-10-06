@@ -1218,6 +1218,37 @@ async def migration_042(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_043(db: aiosqlite.Connection) -> None:
+    """Add the hugs module's pending hug and its log of hugs given and received."""
+    await db.executescript(
+        """
+        CREATE TABLE hug_plans (
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            nick TEXT NOT NULL,
+            warmth REAL NOT NULL,
+            due_at INTEGER NOT NULL,
+            PRIMARY KEY (bot_id, network, channel)
+        );
+        CREATE TABLE hug_events (
+            id INTEGER PRIMARY KEY,
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('hug', 'accept', 'reject')),
+            user_id TEXT,
+            nick TEXT NOT NULL,
+            warmth REAL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX hug_events_scope_idx
+            ON hug_events(bot_id, network, kind, user_id, created_at DESC);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -1249,6 +1280,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_040,
     migration_041,
     migration_042,
+    migration_043,
 )
 
 

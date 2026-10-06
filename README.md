@@ -263,6 +263,22 @@ The choice uses the `initiative` task model (see `task-model`). Set
 `ignore` patterns drop Jeeves' fishing lines still fishes, but cannot see its
 results or notice a ban.
 
+The optional hugs module uses RustJeeves' `!hug <nick>` and the affinity
+module's warmth scores (enable `affinity` too; without it every warmth is
+neutral and the module does nothing). When someone the Bottle is genuinely glad
+to see (`min_warmth`, default 0.55) speaks, a small `chance` (default 0.05)
+plans a hug sent 2–10 minutes later on the next channel message. It hugs at
+most once per `cooldown_hours` (default 24) and the same person at most once
+per `person_cooldown_days` (default 7). When someone hugs the Bottle, it sends
+`!reject` only if their warmth is at or below `reject_below` (default -0.25).
+Plans are in `hug_plans`; every hug given, accepted, or rejected is in
+`hug_events`:
+
+```bash
+bottled-ghosts module-toggle 1 hugs on --actor aureate
+bottled-ghosts module-settings 1 hugs '{"channels":["#lobby"],"game_nick":"Jeeves","chance":0.05}' --actor aureate
+```
+
 Enable occasional unaddressed channel participation with the optional ambient
 chat module. Its line counter and random threshold survive restarts:
 

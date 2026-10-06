@@ -242,6 +242,27 @@ bottled-ghosts module-toggle FRAUDERICK_BOT_ID ignore on --actor aureate
 Set `"allow_addressed": false` only if matching addressed lines should also be
 dropped. Reconnect after changing the module configuration.
 
+Let a Bottle play RustJeeves' fishing game with the optional fishing module. It
+sends one `!recast` a day (reel in, cast straight back out) at a random time
+20–23.5 hours after the last one, on the next message in a configured channel.
+Shortly before each recast, a small LLM call with the Bottle's soul lets it
+choose a plain recast, a lure, chum, or both, and occasionally a stick of
+`!dynamite` afterwards. Dynamite is offered at most once per
+`dynamite_cooldown_days` (default 14, minimum 8), longer than Jeeves' 7-day
+hand regrowth, so a Bottle never loses both hands. A failed choice falls back
+to a plain `!recast`. Jeeves' latest reply is kept in `fishing_schedule` and
+shown to the Bottle when the channel talks about fishing:
+
+```bash
+bottled-ghosts module-toggle 1 fishing on --actor aureate
+bottled-ghosts module-settings 1 fishing '{"channels":["#lobby"],"game_nick":"Jeeves","min_recast_hours":20,"max_recast_hours":23.5,"ai_choices":true,"allow_dynamite":true,"dynamite_cooldown_days":14}' --actor aureate
+```
+
+The choice uses the `initiative` task model (see `task-model`). Set
+`"ai_choices": false` for plain recasts with no LLM call. A Bottle whose
+`ignore` patterns drop Jeeves' fishing lines still fishes, but cannot see its
+results or notice a ban.
+
 Enable occasional unaddressed channel participation with the optional ambient
 chat module. Its line counter and random threshold survive restarts:
 

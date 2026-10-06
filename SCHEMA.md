@@ -108,9 +108,9 @@ Stores per-Bottle module enablement and future module settings. Columns: `bot_id
 
 Stores the ambient-chat module's persisted per-channel progress. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `eligible_lines_seen INTEGER NOT NULL DEFAULT 0` (normal human-ambient line count), `next_trigger_line INTEGER NOT NULL` (random threshold at which a normal ambient reply fires), `utility_lines_seen INTEGER NOT NULL DEFAULT 0 CHECK (utility_lines_seen >= 0)` (count of matching channel events from configured utility bots), `next_utility_trigger_line INTEGER CHECK (next_utility_trigger_line IS NULL OR next_utility_trigger_line > 0)` (random 8–15 threshold for a rare utility-event reaction; `NULL` is the "no relevant utility event has initialized this channel yet" sentinel), `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
 
-## fishing_state
+## fishing_schedule
 
-Stores inspectable per-Bottle, per-channel fishing progress. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `phase TEXT NOT NULL`, `eligible_lines_seen INTEGER NOT NULL DEFAULT 0`, `next_cast_line INTEGER NOT NULL`, `cast_at INTEGER`, `reel_after INTEGER`, `command_sent_at INTEGER`, `banned_until INTEGER`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Unix timestamps are used for game deadlines. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion. Index: `fishing_state_due_idx(bot_id, network, phase, reel_after, banned_until)`. Allowed phases are `idle`, `awaiting_cast`, `fishing`, `awaiting_reel`, `awaiting_dynamite`, and `banned`.
+Stores the inspectable once-a-day `!recast` schedule for the optional fishing module, one row per Bottle and channel. Columns: `bot_id INTEGER NOT NULL`, `network TEXT NOT NULL`, `channel TEXT NOT NULL`, `next_recast_at INTEGER NOT NULL`, `planned_recast TEXT` (the Bottle's pending choice: `!recast`, `!recast lure`, `!recast chum`, or `!recast lure chum`; NULL until chosen), `planned_dynamite INTEGER NOT NULL DEFAULT 0` (0 or 1), `dynamite_due_at INTEGER`, `last_command TEXT`, `last_command_at INTEGER`, `last_dynamite_at INTEGER`, `last_outcome TEXT` (Jeeves' reply to the last command, truncated), `last_outcome_at INTEGER`, `banned_until INTEGER`, `updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP`. Unix timestamps are used for game deadlines. Primary key: `(bot_id, network, channel)`. Foreign key: `bot_id` references `bots(id)` with cascading deletion.
 
 ## summaries
 
@@ -239,3 +239,4 @@ Stores per-Bottle model overrides for individual kinds of LLM call. Columns: `bo
 - 039: Add automatic, FTS-searchable self-memories extracted from public recollection chunks.
 - 040: Add quiet-room initiative cadence state and an inspectable log of every opening offer and its outcome.
 - 041: Add per-Bottle, per-task LLM model overrides.
+- 042: Replace `fishing_state`'s cast/reel phases with `fishing_schedule`, a once-a-day `!recast` schedule with the Bottle's chosen lure, chum, or dynamite; existing lines come due about a day after their cast and bans carry over.

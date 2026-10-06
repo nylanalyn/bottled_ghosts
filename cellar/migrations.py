@@ -1174,6 +1174,50 @@ async def migration_041(db: aiosqlite.Connection) -> None:
     )
 
 
+async def migration_042(db: aiosqlite.Connection) -> None:
+    """Replace the cast/reel phase machine with one daily !recast schedule.
+
+    An existing line is due about a day after it was cast; a Bottle without
+    one fishes within the next few hours. Bans carry over.
+    """
+    await db.executescript(
+        """
+        CREATE TABLE fishing_schedule (
+            bot_id INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            network TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            next_recast_at INTEGER NOT NULL,
+            planned_recast TEXT CHECK (
+                planned_recast IN ('!recast', '!recast lure', '!recast chum',
+                                   '!recast lure chum')
+            ),
+            planned_dynamite INTEGER NOT NULL DEFAULT 0
+                CHECK (planned_dynamite IN (0, 1)),
+            dynamite_due_at INTEGER,
+            last_command TEXT,
+            last_command_at INTEGER,
+            last_dynamite_at INTEGER,
+            last_outcome TEXT,
+            last_outcome_at INTEGER,
+            banned_until INTEGER,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (bot_id, network, channel)
+        );
+        INSERT INTO fishing_schedule(
+            bot_id, network, channel, next_recast_at, banned_until
+        )
+        SELECT bot_id, network, channel,
+               COALESCE(
+                   cast_at + 72000 + abs(random()) % 12600,
+                   CAST(strftime('%s', 'now') AS INTEGER) + abs(random()) % 10800
+               ),
+               banned_until
+        FROM fishing_state;
+        DROP TABLE fishing_state;
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     migration_001, migration_002, migration_003, migration_004, migration_005,
     migration_006, migration_007, migration_008, migration_009, migration_010,
@@ -1204,6 +1248,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     migration_039,
     migration_040,
     migration_041,
+    migration_042,
 )
 
 
